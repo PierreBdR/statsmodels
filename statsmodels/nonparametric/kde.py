@@ -1,563 +1,764 @@
-"""
-Univariate Kernel Density Estimators
+r"""
+Module implementing kernel-based estimation of density of probability.
+
+Given a kernel :math:`K`, the density function is estimated from a sampling 
+:math:`X = \{X_i \in \mathbb{R}^n\}_{i\in\{1,\ldots,m\}}` as:
+
+.. math::
+
+    f(\mathbf{z}) \triangleq \frac{1}{hW} \sum_{i=1}^m \frac{w_i}{\lambda_i}
+    K\left(\frac{X_i-\mathbf{z}}{h\lambda_i}\right)
+
+    W = \sum_{i=1}^m w_i
+
+where :math:`h` is the bandwidth of the kernel, :math:`w_i` are the weights of 
+the data points and :math:`\lambda_i` are the adaptation factor of the kernel 
+width.
+
+The kernel is a function of :math:`\mathbb{R}^n` such that:
+
+.. math::
+
+    \begin{array}{rclcl}
+       \idotsint_{\mathbb{R}^n} f(\mathbf{z}) d\mathbf{z} 
+       & = & 1 & \Longleftrightarrow & \text{$f$ is a probability}\\
+       \idotsint_{\mathbb{R}^n} \mathbf{z}f(\mathbf{z}) d\mathbf{z} &=& 
+       \mathbf{0} & \Longleftrightarrow & \text{$f$ is 
+       centered}\\
+       \forall \mathbf{u}\in\mathbb{R}^n, \|\mathbf{u}\| 
+       = 1\qquad\int_{\mathbb{R}} t^2f(t \mathbf{u}) dt &\approx& 
+       1 & \Longleftrightarrow & \text{The co-variance matrix of $f$ is close 
+       to be the identity.}
+    \end{array}
+
+The constraint on the covariance is only required to provide a uniform meaning 
+for the bandwidth of the kernel.
+
+If the domain of the density estimation is bounded to the interval 
+:math:`[L,U]`, the density is then estimated with:
+
+.. math::
+
+    f(x) \triangleq \frac{1}{hW} \sum_{i=1}^n \frac{w_i}{\lambda_i}
+    \hat{K}(x;X,\lambda_i h,L,U)
+
+where :math:`\hat{K}` is a modified kernel that depends on the exact method 
+used. Currently, only 1D KDE supports bounded domains.
 
 References
 ----------
-Racine, Jeff. (2008) "Nonparametric Econometrics: A Primer," Foundation and
-    Trends in Econometrics: Vol 3: No 1, pp1-88.
-    http://dx.doi.org/10.1561/0800000009
+Wasserman, L. All of Nonparametric Statistics Springer, 2005
 
 http://en.wikipedia.org/wiki/Kernel_%28statistics%29
 
 Silverman, B.W.  Density Estimation for Statistics and Data Analysis.
 """
-from __future__ import absolute_import, print_function
-from statsmodels.compat.python import range
-# for 2to3 with extensions
-import warnings
 
+from __future__ import division, absolute_import, print_function
 import numpy as np
-from scipy import integrate, stats
-from statsmodels.sandbox.nonparametric import kernels
-from statsmodels.tools.decorators import (cache_readonly,
-                                                    resettable_cache)
-from . import bandwidths
-from .kdetools import (forrt, revrt, silverman_transform, counts)
-from .linbin import fast_linbin
+from . import kernels, bandwidths
+from . import kde1d_methods, kdend_methods
+from .kde_utils import numpy_method_idx
 
-#### Kernels Switch for estimators ####
+class KDE(object):
+    r"""
+    Prepare a nD kernel density estimation, possible on a bounded domain.
 
-kernel_switch = dict(gau=kernels.Gaussian, epa=kernels.Epanechnikov,
-                    uni=kernels.Uniform, tri=kernels.Triangular,
-                    biw=kernels.Biweight, triw=kernels.Triweight,
-                    cos=kernels.Cosine, cos2=kernels.Cosine2)
+    :param ndarray endog: 2D array DxN with the N input endog points in D dimension.
+    :param dict kwords: setting attributes at construction time.
+        Any named argument will be equivalent to setting the property
+        after the fact. For example::
 
-def _checkisfit(self):
-    try:
-        self.density
-    except:
-        raise ValueError("Call fit to fit the density first")
+            >>> xs = [1,2,3]
+            >>> k = KDE1D(xs, lower=0)
 
+        will be equivalent to::
 
-#### Kernel Density Estimator Class ###
-
-
-class KDEUnivariate(object):
+            >>> k = KDE1D(xs)
+            >>> k.lower = 0
     """
-    Univariate Kernel Density Estimator.
+    def __init__(self, endog, **kwords):
+        self._endog = None
+        self._upper = None
+        self._lower = None
+        self._kernel = kernels.normal_kernel
 
-    Parameters
-    ----------
-    endog : array-like
-        The variable for which the density estimate is desired.
+        self._bw = None
+        self._covariance = None
+        self._method = None
 
-    Notes
-    -----
-    If cdf, sf, cumhazard, or entropy are computed, they are computed based on
-    the definition of the kernel rather than the FFT approximation, even if
-    the density is fit with FFT = True.
+        self.weights = 1.
+        self.lambdas = 1.
 
-    `KDEUnivariate` is much faster than `KDEMultivariate`, due to its FFT-based
-    implementation.  It should be preferred for univariate, continuous data.
-    `KDEMultivariate` also supports mixed data.
+        for n in kwords:
+            setattr(self, n, kwords[n])
 
-    See Also
-    --------
-    KDEMultivariate
-    kdensity, kdensityfft
+        self.endog = endog
 
-    Examples
-    --------
-    >>> import statsmodels.api as sm
-    >>> import matplotlib.pyplot as plt
+        has_bw = (self._bw is not None or self._bw_fct is not None or
+                  self._covariance is not None or self._cov_fct is not None)
+        if not has_bw:
+            self.covariance = scotts_covariance
 
-    >>> nobs = 300
-    >>> np.random.seed(1234)  # Seed random generator
-    >>> dens = sm.nonparametric.KDEUnivariate(np.random.normal(size=nobs))
-    >>> dens.fit()
-    >>> plt.plot(dens.cdf)
-    >>> plt.show()
+        if self._method is None:
+            self.method = kde_methods.default_method
 
-    """
-
-    def __init__(self, endog):
-        self.endog = np.asarray(endog)
-
-    def fit(self, kernel="gau", bw="normal_reference", fft=True, weights=None,
-            gridsize=None, adjust=1, cut=3, clip=(-np.inf, np.inf)):
+    def copy(self):
         """
-        Attach the density estimate to the KDEUnivariate class.
-
-        Parameters
-        ----------
-        kernel : str
-            The Kernel to be used. Choices are:
-
-            - "biw" for biweight
-            - "cos" for cosine
-            - "epa" for Epanechnikov
-            - "gau" for Gaussian.
-            - "tri" for triangular
-            - "triw" for triweight
-            - "uni" for uniform
-
-        bw : str, float
-            The bandwidth to use. Choices are:
-
-            - "scott" - 1.059 * A * nobs ** (-1/5.), where A is
-              `min(std(X),IQR/1.34)`
-            - "silverman" - .9 * A * nobs ** (-1/5.), where A is
-              `min(std(X),IQR/1.34)`
-            - "normal_reference" - C * A * nobs ** (-1/5.), where C is
-              calculated from the kernel. Equivalent (up to 2 dp) to the
-              "scott" bandwidth for gaussian kernels. See bandwidths.py
-            - If a float is given, it is the bandwidth.
-
-        fft : bool
-            Whether or not to use FFT. FFT implementation is more
-            computationally efficient. However, only the Gaussian kernel
-            is implemented. If FFT is False, then a 'nobs' x 'gridsize'
-            intermediate array is created.
-        gridsize : int
-            If gridsize is None, max(len(X), 50) is used.
-        cut : float
-            Defines the length of the grid past the lowest and highest values
-            of X so that the kernel goes to zero. The end points are
-            -/+ cut*bw*{min(X) or max(X)}
-        adjust : float
-            An adjustment factor for the bw. Bandwidth becomes bw * adjust.
+        Shallow copy of the KDE object
         """
+        res = KDE.__new__(KDE)
+        # Copy private members: start with a single '_'
+        for m in self.__dict__:
+            if len(m) > 1 and m[0] == '_' and m[1] != '_':
+                setattr(res, m, getattr(self, m))
+        return res
+
+    @property
+    def endog(self):
+        return self._endog
+
+    @endog.setter
+    def endog(self, xs):
+        self._endog = np.atleast_2d(xs)
+        assert len(self._endog.shape) == 2, "The attribute 'endog' must be a one-dimension array"
+
+    @property
+    def kernel(self):
+        r"""
+        Kernel class. This must be an object modeled on :py:class:`kernels.Kernels` or on :py:class:`kernels.Kernel1D`
+        for 1D kernels. It is recommended to inherit one of these classes to provide numerical approximation for all
+        methods.
+
+        By default, the kernel class is :py:class:`pyqt_fit.kernels.normal_kernel`
+        """
+        return self._kernel
+
+    @kernel.setter
+    def kernel(self, val):
+        self._kernel = val
+
+    @property
+    def lower(self):
+        r"""
+        Lower bound of the density domain. If None, this is :math:`-\infty` on all dimension.
+        """
+        return self._lower
+
+    @lower.setter
+    def lower(self, val):
+        self._lower = float(val)
+
+    @lower.deleter
+    def lower(self):
+        self._lower = None
+
+    @property
+    def upper(self):
+        r"""
+        Upper bound of the density domain. If deleted, becomes set to
+        :math:`\infty`
+        """
+        return self._upper
+
+    @upper.setter
+    def upper(self, val):
+        self._upper = val
+
+    @upper.deleter
+    def upper(self):
+        self._upper = None
+
+    @property
+    def weights(self):
+        """
+        Weigths associated to each data point. It can be either a single value,
+        or a 1D-array with a value per data point. If a single value is provided,
+        the weights will always be set to 1.
+        """
+        return self._weights
+
+    @weights.setter
+    def weights(self, ws):
         try:
+            ws = float(ws)
+            self._weights = np.asarray(1.)
+        except TypeError:
+            ws = np.atleast_1d(ws).astype(float)
+            self._weights = ws
+        self._total_weights = None
+
+    @weights.deleter
+    def weights(self):
+        self._weights = np.asarray(1.)
+        self._total_weights = None
+
+    @property
+    def total_weights(self):
+        return self._total_weights
+
+    @property
+    def lambdas(self):
+        """
+        Scaling of the bandwidth, per data point. It can be either a single
+        value or an array with one value per data point.
+
+        When deleted, the lamndas are reset to 1.
+        """
+        return self._lambdas
+
+    @lambdas.setter
+    def lambdas(self, ls):
+        self.need_fit()
+        try:
+            self._lambdas = np.asarray(float(ls))
+        except TypeError:
+            ls = np.atleast_1d(ls).astype(float)
+            self._lambdas = ls
+
+    @lambdas.deleter
+    def lambdas(self):
+        self.need_fit()
+        self._lambdas = np.asarray(1.)
+
+    @property
+    def bandwidth(self):
+        """
+        Bandwidth of the kernel.
+        Can be set either as a fixed value or using a bandwidth calculator,
+        that is a function of signature ``w(data)`` that returns a single
+        value.
+
+        .. note::
+
+            A ndarray with a single value will be converted to a floating point
+            value.
+        """
+        return self._bw
+
+    @bandwidth.setter
+    def bandwidth(self, bw):
+        self._bw  = bw
+        self._covariance = None
+
+    @property
+    def covariance(self):
+        """
+        Covariance of the gaussian kernel.
+        Can be set either as a fixed value or using a bandwidth calculator,
+        that is a function of signature ``w(data)`` that returns a single
+        value.
+
+        .. note::
+
+            A ndarray with a single value will be converted to a floating point
+            value.
+        """
+        return self._covariance
+
+    @covariance.setter
+    def covariance(self, cov):
+        self._covariance = cov
+        self._bw = None
+
+    @property
+    def dimension(self):
+        return self._endog.shape[0]
+
+    @property
+    def nb_points(self):
+        return self._endog.shape[1]
+
+    def fit(self):
+        """
+        Compute the various parameters needed by the kde method
+        """
+        if self._weights.shape:
+            assert self._weights.shape == self._endog.shape, \
+                "There must be as many weights as data points"
+            self._total_weights = sum(self._weights)
+        else:
+            self._total_weights = len(self._endog)
+        self.method.fit(self)
+        self._fitted = True
+
+class KDE1D(object):
+    r"""
+    Perform a kernel based density estimation in 1D, possibly on a bounded
+    domain :math:`[L,U]`.
+
+    :param ndarray data: 1D array with the data points
+    :param dict kwords: setting attributes at construction time.
+        Any named argument will be equivalent to setting the property
+        after the fact. For example::
+
+            >>> xs = [1,2,3]
+            >>> k = KDE1D(xs, lower=0)
+
+        will be equivalent to::
+
+            >>> k = KDE1D(xs)
+            >>> k.lower = 0
+
+    The calculation is separated in three parts:
+
+        - The kernel (:py:attr:`kernel`)
+        - The bandwidth or covariance estimation (:py:attr:`bandwidth`, 
+          :py:attr:`covariance`)
+        - The estimation method (:py:attr:`method`)
+
+    """
+
+    def __init__(self, xdata, **kwords):
+        self._xdata = None
+        self._upper = None
+        self._lower = None
+        self._kernel = kernels.normal_kernel
+
+        self._bw_fct = None
+        self._bw = None
+        self._cov_fct = None
+        self._covariance = None
+        self._method = None
+
+        self.weights = 1.
+        self.lambdas = 1.
+
+        self._fitted = False
+
+        for n in kwords:
+            setattr(self, n, kwords[n])
+
+        self.xdata = xdata
+
+        has_bw = (self._bw is not None or self._bw_fct is not None or
+                  self._covariance is not None or self._cov_fct is not None)
+        if not has_bw:
+            self.covariance = scotts_covariance
+
+        if self._method is None:
+            self.method = kde_methods.default_method
+
+    @property
+    def fitted(self):
+        """
+        Test if the fitting has been done
+        """
+        return self._fitted
+
+    def fit_if_needed(self):
+        """
+        Fit only if needed (testing self.fitted)
+        """
+        if not self._fitted:
+            self.fit()
+
+    def need_fit(self):
+        """
+        Calling this function will mark the object as needing fitting.
+        """
+        self._fitter = False
+
+    def copy(self):
+        """
+        Shallow copy of the KDE object
+        """
+        res = KDE1D.__new__(KDE1D)
+        # Copy private members: start with a single '_'
+        for m in self.__dict__:
+            if len(m) > 1 and m[0] == '_' and m[1] != '_':
+                setattr(res, m, getattr(self, m))
+        return res
+
+    def compute_bandwidth(self):
+        """
+        Method computing the bandwidth if needed (i.e. if it was defined by functions)
+        """
+        self._bw, self._covariance = kde_methods.compute_bandwidth(self)
+
+    def fit(self):
+        """
+        Compute the various parameters needed by the kde method
+        """
+        if self._weights.shape:
+            assert self._weights.shape == self._xdata.shape, \
+                "There must be as many weights as data points"
+            self._total_weights = sum(self._weights)
+        else:
+            self._total_weights = len(self._xdata)
+        self.method.fit(self)
+        self._fitted = True
+
+    @property
+    def xdata(self):
+        return self._xdata
+
+    @xdata.setter
+    def xdata(self, xs):
+        self.need_fit()
+        self._xdata = np.atleast_1d(xs)
+        assert len(self._xdata.shape) == 1, "The attribute xdata must be a one-dimension array"
+
+    @property
+    def kernel(self):
+        r"""
+        Kernel object. This must be an object modeled on 
+        :py:class:`pyqt_fit.kernels.Kernel1D`. It is recommended to inherit 
+        this class to provide numerical approximation for all methods.
+
+        By default, the kernel is an instance of 
+        :py:class:`pyqt_fit.kernels.normal_kernel1d`
+        """
+        return self._kernel
+
+    @kernel.setter
+    def kernel(self, val):
+        self.need_fit()
+        self._kernel = val
+
+    @property
+    def lower(self):
+        r"""
+        Lower bound of the density domain. If deleted, becomes set to
+        :math:`-\infty`
+        """
+        return self._lower
+
+    @lower.setter
+    def lower(self, val):
+        self.need_fit()
+        self._lower = float(val)
+
+    @lower.deleter
+    def lower(self):
+        self.need_fit()
+        self._lower = -np.inf
+
+    @property
+    def upper(self):
+        r"""
+        Upper bound of the density domain. If deleted, becomes set to
+        :math:`\infty`
+        """
+        return self._upper
+
+    @upper.setter
+    def upper(self, val):
+        self.need_fit()
+        self._upper = float(val)
+
+    @upper.deleter
+    def upper(self):
+        self.need_fit()
+        self._upper = np.inf
+
+    @property
+    def weights(self):
+        """
+        Weigths associated to each data point. It can be either a single value,
+        or an array with a value per data point. If a single value is provided,
+        the weights will always be set to 1.
+        """
+        return self._weights
+
+    @weights.setter
+    def weights(self, ws):
+        self.need_fit()
+        try:
+            ws = float(ws)
+            self._weights = np.asarray(1.)
+        except TypeError:
+            ws = np.array(ws, dtype=float)
+            self._weights = ws
+        self._total_weights = None
+
+    @weights.deleter
+    def weights(self):
+        self.need_fit()
+        self._weights = np.asarray(1.)
+        self._total_weights = None
+
+    @property
+    def total_weights(self):
+        return self._total_weights
+
+    @property
+    def lambdas(self):
+        """
+        Scaling of the bandwidth, per data point. It can be either a single
+        value or an array with one value per data point.
+
+        When deleted, the lamndas are reset to 1.
+        """
+        return self._lambdas
+
+    @lambdas.setter
+    def lambdas(self, ls):
+        self.need_fit()
+        try:
+            self._lambdas = np.asarray(float(ls))
+        except TypeError:
+            ls = np.array(ls, dtype=float)
+            self._lambdas = ls
+
+    @lambdas.deleter
+    def lambdas(self):
+        self.need_fit()
+        self._lambdas = np.asarray(1.)
+
+    @property
+    def bandwidth(self):
+        """
+        Bandwidth of the kernel.
+        Can be set either as a fixed value or using a bandwidth calculator,
+        that is a function of signature ``w(xdata)`` that returns a single
+        value.
+
+        .. note::
+
+            A ndarray with a single value will be converted to a floating point
+            value.
+        """
+        return self._bw
+
+    @bandwidth.setter
+    def bandwidth(self, bw):
+        self.need_fit()
+        self._bw_fct = None
+        self._cov_fct = None
+        if callable(bw):
+            self._bw_fct = bw
+        else:
             bw = float(bw)
-            self.bw_method = "user-given"
-        except:
-            self.bw_method = bw
-        endog = self.endog
+            self._bw = bw
+            self._covariance = bw * bw
 
-        if fft:
-            if kernel != "gau":
-                msg = "Only gaussian kernel is available for fft"
-                raise NotImplementedError(msg)
-            if weights is not None:
-                msg = "Weights are not implemented for fft"
-                raise NotImplementedError(msg)
-            density, grid, bw = kdensityfft(endog, kernel=kernel, bw=bw,
-                    adjust=adjust, weights=weights, gridsize=gridsize,
-                    clip=clip, cut=cut)
+    @property
+    def bandwidth_function(self):
+        return self._bw_fct
+
+    @property
+    def covariance(self):
+        """
+        Covariance of the gaussian kernel.
+        Can be set either as a fixed value or using a bandwidth calculator,
+        that is a function of signature ``w(xdata)`` that returns a single
+        value.
+
+        .. note::
+
+            A ndarray with a single value will be converted to a floating point
+            value.
+        """
+        return self._covariance
+
+    @covariance.setter
+    def covariance(self, cov):
+        self.need_fit()
+        self._bw_fct = None
+        self._cov_fct = None
+        if callable(cov):
+            self._cov_fct = cov
         else:
-            density, grid, bw = kdensity(endog, kernel=kernel, bw=bw,
-                    adjust=adjust, weights=weights, gridsize=gridsize,
-                    clip=clip, cut=cut)
-        self.density = density
-        self.support = grid
-        self.bw = bw
-        self.kernel = kernel_switch[kernel](h=bw) # we instantiate twice,
-                                                # should this passed to funcs?
-        # put here to ensure empty cache after re-fit with new options
-        self.kernel.weights = weights
-        if weights is not None:
-            self.kernel.weights /= weights.sum()
-        self._cache = resettable_cache()
+            cov = float(cov)
+            self._covariance = cov
+            self._bw = np.sqrt(cov)
 
-    @cache_readonly
-    def cdf(self):
+    @property
+    def covariance_function(self):
+        return self._cov_fct
+
+    @numpy_method_idx
+    def pdf(self, points, out=None):
         """
-        Returns the cumulative distribution function evaluated at the support.
-
-        Notes
-        -----
-        Will not work if fit has not been called.
+        Compute the PDF of the distribution on the set of points ``points``
         """
-        _checkisfit(self)
-        density = self.density
-        kern = self.kernel
-        if kern.domain is None: # TODO: test for grid point at domain bound
-            a,b = -np.inf,np.inf
-        else:
-            a,b = kern.domain
-        func = lambda x,s: kern.density(s,x)
+        self.fit_if_needed()
+        return self._method.pdf(self, points, out)
 
-        support = self.support
-        support = np.r_[a,support]
-        gridsize = len(support)
-        endog = self.endog
-        probs = [integrate.quad(func, support[i-1], support[i],
-                    args=endog)[0] for i in range(1,gridsize)]
-        return np.cumsum(probs)
-
-    @cache_readonly
-    def cumhazard(self):
+    def evaluate(self, points, out=None):
         """
-        Returns the hazard function evaluated at the support.
+        Compute the PDF of the distribution on the set of points ``points``
+        """
+        return self.pdf(points, out)
 
-        Notes
-        -----
-        Will not work if fit has not been called.
+    def __call__(self, points, out=None):
+        """
+        This method is an alias for :py:meth:`BoundedKDE1D.evaluate`
+        """
+        return self.pdf(points, out=out)
+
+    @numpy_method_idx
+    def cdf(self, points, out=None):
+        r"""
+        Compute the cumulative distribution function defined as:
+
+        .. math::
+
+            cdf(x) = P(X \leq x) = \int_l^x p(t) dt
+
+        where :math:`l` is the lower bound of the distribution domain and 
+        :math:`p` the density of probability.
+        """
+        self.fit_if_needed()
+        return self.method.cdf(self, points, out)
+
+    def cdf_grid(self, N=None, cut=None):
+        """
+        Compute the cdf from the lower bound to the points given as argument.
+        """
+        self.fit_if_needed()
+        return self.method.cdf_grid(self, N, cut)
+
+    @numpy_method_idx
+    def icdf(self, points, out=None):
+        r"""
+        Compute the inverse cumulative distribution (quantile) function.
+        """
+        self.fit_if_needed()
+        return self.method.icdf(self, points, out)
+
+    def icdf_grid(self, N=None, cut=None):
+        """
+        Compute the inverse cumulative distribution (quantile) function on a grid.
+        """
+        self.fit_if_needed()
+        return self.method.icdf_grid(self, N, cut)
+
+    @numpy_method_idx
+    def sf(self, points, out=None):
+        r"""
+        Compute the survival function.
+
+        The survival function is defined as:
+
+        .. math::
+
+            sf(x) = P(X \geq x) = \int_x^u p(t) dt = 1 - cdf(x)
+
+        where :math:`u` is the upper bound of the distribution domain and 
+        :math:`p` the density of probability.
 
         """
-        _checkisfit(self)
-        return -np.log(self.sf)
+        self.fit_if_needed()
+        return self.method.sf(self, points, out)
 
-    @cache_readonly
-    def sf(self):
+    def sf_grid(self, N=None, cut=None):
+        r"""
+        Compute the survival function on a grid
         """
-        Returns the survival function evaluated at the support.
+        self.fit_if_needed()
+        return self.method.sf_grid(self, N, cut)
 
-        Notes
-        -----
-        Will not work if fit has not been called.
+    @numpy_method_idx
+    def isf(self, points, out=None):
+        r"""
+        Compute the inverse survival function, defined as:
+
+        .. math::
+
+            isf(p) = \sup\left\{x\in\mathbb{R} : sf(x) \leq p\right\}
         """
-        _checkisfit(self)
-        return 1 - self.cdf
+        self.fit_if_needed()
+        return self.method.isf(self, points, out)
 
-    @cache_readonly
-    def entropy(self):
+    def isf_grid(self, N=None, cut=None):
+        r"""
+        Compute the inverse survival function on a grid.
         """
-        Returns the differential entropy evaluated at the support
+        self.fit_if_needed()
+        return self.method.isf_grid(self, N, cut)
 
-        Notes
-        -----
-        Will not work if fit has not been called. 1e-12 is added to each
-        probability to ensure that log(0) is not called.
+    @numpy_method_idx
+    def hazard(self, points, out=None):
+        r"""
+        Compute the hazard function evaluated on the points.
+
+        The hazard function is defined as:
+
+        .. math::
+
+            h(x) = \frac{p(x)}{sf(x)}
         """
-        _checkisfit(self)
+        self.fit_if_needed()
+        return self.method.hazard(self, points, out)
 
-        def entr(x,s):
-            pdf = kern.density(s,x)
-            return pdf*np.log(pdf+1e-12)
-
-        pdf = self.density
-        kern = self.kernel
-
-        if kern.domain is not None:
-            a,b = self.domain
-        else:
-            a,b = -np.inf,np.inf
-        endog = self.endog
-        #TODO: below could run into integr problems, cf. stats.dist._entropy
-        return -integrate.quad(entr, a,b, args=(endog,))[0]
-
-    @cache_readonly
-    def icdf(self):
+    def hazard_grid(self, N=None, cut=None):
         """
-        Inverse Cumulative Distribution (Quantile) Function
-
-        Notes
-        -----
-        Will not work if fit has not been called. Uses
-        `scipy.stats.mstats.mquantiles`.
+        Compute the hazard function evaluated on a grid.
         """
-        _checkisfit(self)
-        gridsize = len(self.density)
-        return stats.mstats.mquantiles(self.endog, np.linspace(0,1,
-                    gridsize))
+        self.fit_if_needed()
+        return self.method.hazard_grid(self, N, cut)
 
-    def evaluate(self, point):
+    @numpy_method_idx
+    def cumhazard(self, points, out=None):
+        r"""
+        Compute the cumulative hazard function evaluated on the points.
+
+        The cumulative hazard function is defined as:
+
+        .. math::
+
+            ch(x) = \int_l^x h(t) dt = -\ln sf(x)
+
+        where :math:`l` is the lower bound of the domain, :math:`h` the hazard 
+        function and :math:`sf` the survival function.
         """
-        Evaluate density at a single point.
+        self.fit_if_needed()
+        return self.method.cumhazard(self, points, out)
 
-        Parameters
-        ----------
-        point : float
-            Point at which to evaluate the density.
+    def cumhazard_grid(self, N=None, cut=None):
         """
-        _checkisfit(self)
-        return self.kernel.density(self.endog, point)
+        Compute the cumulative hazard function evaluated on a grid.
+        """
+        self.fit_if_needed()
+        return self.method.cumhazard_grid(self, N, cut)
 
+    @property
+    def method(self):
+        """
+        Select the method to use. The method should be an object modeled on 
+        :py:class:`pyqt_fit.kde_methods.KDE1DMethod`, and it is recommended to 
+        inherit the model.
 
-class KDE(KDEUnivariate):
-    def __init__(self, endog):
-        self.endog = np.asarray(endog)
-        warnings.warn("KDE is deprecated and will be removed in 0.6, "
-                      "use KDEUnivariate instead", FutureWarning)
+        Available methods in the :py:mod:`pyqt_fit.kde_methods` sub-module.
 
+        :Default: :py:data:`pyqt_fit.kde_methods.default_method`
+        """
+        return self._method
 
-#### Kernel Density Estimator Functions ####
+    @method.setter
+    def method(self, m):
+        self.need_fit()
+        self._method = m
 
-def kdensity(X, kernel="gau", bw="normal_reference", weights=None, gridsize=None,
-             adjust=1, clip=(-np.inf,np.inf), cut=3, retgrid=True):
-    """
-    Rosenblatt-Parzen univariate kernel density estimator.
+    @method.deleter
+    def method(self):
+        self.need_fit()
+        self._method = kde_methods.renormalization
 
-    Parameters
-    ----------
-    X : array-like
-        The variable for which the density estimate is desired.
-    kernel : str
-        The Kernel to be used. Choices are
-        - "biw" for biweight
-        - "cos" for cosine
-        - "epa" for Epanechnikov
-        - "gau" for Gaussian.
-        - "tri" for triangular
-        - "triw" for triweight
-        - "uni" for uniform
-    bw : str, float
-        "scott" - 1.059 * A * nobs ** (-1/5.), where A is min(std(X),IQR/1.34)
-        "silverman" - .9 * A * nobs ** (-1/5.), where A is min(std(X),IQR/1.34)
-        If a float is given, it is the bandwidth.
-    weights : array or None
-        Optional  weights. If the X value is clipped, then this weight is
-        also dropped.
-    gridsize : int
-        If gridsize is None, max(len(X), 50) is used.
-    adjust : float
-        An adjustment factor for the bw. Bandwidth becomes bw * adjust.
-    clip : tuple
-        Observations in X that are outside of the range given by clip are
-        dropped. The number of observations in X is then shortened.
-    cut : float
-        Defines the length of the grid past the lowest and highest values of X
-        so that the kernel goes to zero. The end points are
-        -/+ cut*bw*{min(X) or max(X)}
-    retgrid : bool
-        Whether or not to return the grid over which the density is estimated.
+    @property
+    def closed(self):
+        """
+        Returns true if the density domain is closed (i.e. lower and upper
+        are both finite)
+        """
+        return self.lower > -np.inf and self.upper < np.inf
 
-    Returns
-    -------
-    density : array
-        The densities estimated at the grid points.
-    grid : array, optional
-        The grid points at which the density is estimated.
+    @property
+    def bounded(self):
+        """
+        Returns true if the density domain is actually bounded
+        """
+        return self.lower > -np.inf or self.upper < np.inf
 
-    Notes
-    -----
-    Creates an intermediate (`gridsize` x `nobs`) array. Use FFT for a more
-    computationally efficient version.
-    """
-    X = np.asarray(X)
-    if X.ndim == 1:
-        X = X[:,None]
-    clip_x = np.logical_and(X>clip[0], X<clip[1])
-    X = X[clip_x]
+    def grid(self, N=None, cut=None):
+        """
+        Evaluate the density on a grid of N points spanning the whole dataset.
 
-    nobs = float(len(X)) # after trim
+        :returns: a tuple with the mesh on which the density is evaluated and
+            the density itself
+        """
+        self.fit_if_needed()
+        return self._method.grid(self, N, cut)
 
-    if gridsize == None:
-        gridsize = max(nobs,50) # don't need to resize if no FFT
-
-        # handle weights
-    if weights is None:
-        weights = np.ones(nobs)
-        q = nobs
-    else:
-        # ensure weights is a numpy array
-        weights = np.asarray(weights)
-        if len(weights) != len(clip_x):
-            msg = "The length of the weights must be the same as the given X."
-            raise ValueError(msg)
-        weights = weights[clip_x.squeeze()]
-        q = weights.sum()
-
-    # Get kernel object corresponding to selection
-    kern = kernel_switch[kernel]()
-
-    # if bw is None, select optimal bandwidth for kernel
-    try:
-        bw = float(bw)
-    except:
-        bw = bandwidths.select_bandwidth(X, bw, kern)
-    bw *= adjust
-
-    a = np.min(X,axis=0) - cut*bw
-    b = np.max(X,axis=0) + cut*bw
-    grid = np.linspace(a, b, gridsize)
-
-    k = (X.T - grid[:,None])/bw  # uses broadcasting to make a gridsize x nobs
-
-    # set kernel bandwidth
-    kern.seth(bw)
-
-    # truncate to domain
-    if kern.domain is not None: # won't work for piecewise kernels like parzen
-        z_lo, z_high = kern.domain
-        domain_mask = (k < z_lo) | (k > z_high)
-        k = kern(k) # estimate density
-        k[domain_mask] = 0
-    else:
-        k = kern(k) # estimate density
-
-    k[k<0] = 0 # get rid of any negative values, do we need this?
-
-    dens = np.dot(k,weights)/(q*bw)
-
-    if retgrid:
-        return dens, grid, bw
-    else:
-        return dens, bw
-
-def kdensityfft(X, kernel="gau", bw="normal_reference", weights=None, gridsize=None,
-                adjust=1, clip=(-np.inf,np.inf), cut=3, retgrid=True):
-    """
-    Rosenblatt-Parzen univariate kernel density estimator
-
-    Parameters
-    ----------
-    X : array-like
-        The variable for which the density estimate is desired.
-    kernel : str
-        ONLY GAUSSIAN IS CURRENTLY IMPLEMENTED.
-        "bi" for biweight
-        "cos" for cosine
-        "epa" for Epanechnikov, default
-        "epa2" for alternative Epanechnikov
-        "gau" for Gaussian.
-        "par" for Parzen
-        "rect" for rectangular
-        "tri" for triangular
-    bw : str, float
-        "scott" - 1.059 * A * nobs ** (-1/5.), where A is min(std(X),IQR/1.34)
-        "silverman" - .9 * A * nobs ** (-1/5.), where A is min(std(X),IQR/1.34)
-        If a float is given, it is the bandwidth.
-    weights : array or None
-        WEIGHTS ARE NOT CURRENTLY IMPLEMENTED.
-        Optional  weights. If the X value is clipped, then this weight is
-        also dropped.
-    gridsize : int
-        If gridsize is None, min(len(X), 512) is used. Note that the provided
-        number is rounded up to the next highest power of 2.
-    adjust : float
-        An adjustment factor for the bw. Bandwidth becomes bw * adjust.
-        clip : tuple
-        Observations in X that are outside of the range given by clip are
-        dropped. The number of observations in X is then shortened.
-    cut : float
-        Defines the length of the grid past the lowest and highest values of X
-        so that the kernel goes to zero. The end points are
-        -/+ cut*bw*{X.min() or X.max()}
-    retgrid : bool
-        Whether or not to return the grid over which the density is estimated.
-
-    Returns
-    -------
-    density : array
-        The densities estimated at the grid points.
-    grid : array, optional
-        The grid points at which the density is estimated.
-
-    Notes
-    -----
-    Only the default kernel is implemented. Weights aren't implemented yet.
-    This follows Silverman (1982) with changes suggested by Jones and Lotwick
-    (1984). However, the discretization step is replaced by linear binning
-    of Fan and Marron (1994). This should be extended to accept the parts
-    that are dependent only on the data to speed things up for
-    cross-validation.
-
-    References
-    ---------- ::
-
-    Fan, J. and J.S. Marron. (1994) `Fast implementations of nonparametric
-        curve estimators`. Journal of Computational and Graphical Statistics.
-        3.1, 35-56.
-    Jones, M.C. and H.W. Lotwick. (1984) `Remark AS R50: A Remark on Algorithm
-        AS 176. Kernal Density Estimation Using the Fast Fourier Transform`.
-        Journal of the Royal Statistical Society. Series C. 33.1, 120-2.
-    Silverman, B.W. (1982) `Algorithm AS 176. Kernel density estimation using
-        the Fast Fourier Transform. Journal of the Royal Statistical Society.
-        Series C. 31.2, 93-9.
-    """
-    X = np.asarray(X)
-    X = X[np.logical_and(X>clip[0], X<clip[1])] # won't work for two columns.
-                                                # will affect underlying data?
-    
-    # Get kernel object corresponding to selection
-    kern = kernel_switch[kernel]()
-
-    try:
-        bw = float(bw)
-    except:
-        bw = bandwidths.select_bandwidth(X, bw, kern) # will cross-val fit this pattern?
-    bw *= adjust
-
-    nobs = float(len(X)) # after trim
-
-    # 1 Make grid and discretize the data
-    if gridsize == None:
-        gridsize = np.max((nobs,512.))
-    gridsize = 2**np.ceil(np.log2(gridsize)) # round to next power of 2
-
-    a = np.min(X)-cut*bw
-    b = np.max(X)+cut*bw
-    grid,delta = np.linspace(a,b,gridsize,retstep=True)
-    RANGE = b-a
-
-#TODO: Fix this?
-# This is the Silverman binning function, but I believe it's buggy (SS)
-# weighting according to Silverman
-#    count = counts(X,grid)
-#    binned = np.zeros_like(grid)    #xi_{k} in Silverman
-#    j = 0
-#    for k in range(int(gridsize-1)):
-#        if count[k]>0: # there are points of X in the grid here
-#            Xingrid = X[j:j+count[k]] # get all these points
-#            # get weights at grid[k],grid[k+1]
-#            binned[k] += np.sum(grid[k+1]-Xingrid)
-#            binned[k+1] += np.sum(Xingrid-grid[k])
-#            j += count[k]
-#    binned /= (nobs)*delta**2 # normalize binned to sum to 1/delta
-
-#NOTE: THE ABOVE IS WRONG, JUST TRY WITH LINEAR BINNING
-    binned = fast_linbin(X,a,b,gridsize)/(delta*nobs)
-
-    # step 2 compute FFT of the weights, using Munro (1976) FFT convention
-    y = forrt(binned)
-
-    # step 3 and 4 for optimal bw compute zstar and the density estimate f
-    # don't have to redo the above if just changing bw, ie., for cross val
-
-#NOTE: silverman_transform is the closed form solution of the FFT of the
-#gaussian kernel. Not yet sure how to generalize it.
-    zstar = silverman_transform(bw, gridsize, RANGE)*y # 3.49 in Silverman
-                                                   # 3.50 w Gaussian kernel
-    f = revrt(zstar)
-    if retgrid:
-        return f, grid, bw
-    else:
-        return f, bw
-
-if __name__ == "__main__":
-    import numpy as np
-    np.random.seed(12345)
-    xi = np.random.randn(100)
-    f,grid, bw1 = kdensity(xi, kernel="gau", bw=.372735, retgrid=True)
-    f2, bw2 = kdensityfft(xi, kernel="gau", bw="silverman",retgrid=False)
-
-# do some checking vs. silverman algo.
-# you need denes.f, http://lib.stat.cmu.edu/apstat/176
-#NOTE: I (SS) made some changes to the Fortran
-# and the FFT stuff from Munro http://lib.stat.cmu.edu/apstat/97o
-# then compile everything and link to denest with f2py
-#Make pyf file as usual, then compile shared object
-#f2py denest.f -m denest2 -h denest.pyf
-#edit pyf
-#-c flag makes it available to other programs, fPIC builds a shared library
-#/usr/bin/gfortran -Wall -c -fPIC fft.f
-#f2py -c denest.pyf ./fft.o denest.f
-
-    try:
-        from denest2 import denest # @UnresolvedImport
-        a = -3.4884382032045504
-        b = 4.3671504686785605
-        RANGE = b - a
-        bw = bandwidths.bw_silverman(xi)
-
-        ft,smooth,ifault,weights,smooth1 = denest(xi,a,b,bw,np.zeros(512),np.zeros(512),0,
-                np.zeros(512), np.zeros(512))
-# We use a different binning algo, so only accurate up to 3 decimal places
-        np.testing.assert_almost_equal(f2, smooth, 3)
-#NOTE: for debugging
-#        y2 = forrt(weights)
-#        RJ = np.arange(512/2+1)
-#        FAC1 = 2*(np.pi*bw/RANGE)**2
-#        RJFAC = RJ**2*FAC1
-#        BC = 1 - RJFAC/(6*(bw/((b-a)/M))**2)
-#        FAC = np.exp(-RJFAC)/BC
-#        SMOOTH = np.r_[FAC,FAC[1:-1]] * y2
-
-#        dens = revrt(SMOOTH)
-
-    except:
-#        ft = np.loadtxt('./ft_silver.csv')
-#        smooth = np.loadtxt('./smooth_silver.csv')
-        print("Didn't get the estimates from the Silverman algorithm")
