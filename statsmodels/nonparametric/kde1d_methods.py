@@ -39,8 +39,6 @@ import numpy as np
 from scipy import fftpack, integrate, optimize
 from .kde_utils import make_ufunc, namedtuple, numpy_trans_idx, numpy_method_idx
 from .fast_linbin import fast_linbin as fast_bin
-#from .fast_linbin import fast_bin
-#from .binning import fast_bin
 from copy import copy as shallow_copy
 
 def generate_grid(kde, N=None, cut=None):
@@ -837,7 +835,7 @@ class Cyclic(KDE1DMethod):
         if not weights.shape:
             weights = None
 
-        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=False)
+        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=True)
         DataHist = DataHist / self.total_weights
         FFTData = np.fft.rfft(DataHist)
 

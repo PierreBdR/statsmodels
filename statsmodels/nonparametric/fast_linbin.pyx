@@ -88,7 +88,7 @@ def fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUB
                 w = weights[i]
             else:
                 w = 1.
-            if base_idx == M:
+            if base_idx == M: # Only possible if cyclic
                 gcnts[0] += w
             else:
                 if base_idx >= 0:
@@ -96,7 +96,7 @@ def fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUB
                 if base_idx < M-1:
                     gcnts[base_idx+1] += rem*w
                 elif base_idx == M-1:
-                    gcnts[0] += rem
+                    gcnts[0] += rem*w
 
     if cyclic:
         mesh = np.linspace(a, b-delta, M)
