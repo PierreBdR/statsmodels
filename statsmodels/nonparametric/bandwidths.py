@@ -20,7 +20,7 @@ def _select_sigma(X):
     return np.minimum(np.std(X, axis=0, ddof=1), IQR)
 
 
-def variance_bandwidth(factor, endog):
+def variance_bandwidth(factor, exog):
     r"""
     Returns the covariance matrix:
 
@@ -30,7 +30,7 @@ def variance_bandwidth(factor, endog):
 
     where :math:`\tau` is a correcting factor that depends on the method.
     """
-    data_covariance = np.atleast_2d(np.cov(endog, rowvar=1, bias=False))
+    data_covariance = np.atleast_2d(np.cov(exog, rowvar=1, bias=False))
     sq_bandwidth = data_covariance * factor * factor
     return sq_bandwidth
 
@@ -43,10 +43,10 @@ def silverman_covariance(model):
 
         \tau = \left( n \frac{d+2}{4} \right)^\frac{-1}{d+4}
     """
-    endog = np.atleast_2d(model.endog)
-    d, n = endog.shape
+    exog = np.atleast_2d(model.exog)
+    d, n = exog.shape
     return variance_bandwidth(np.power(n * (d + 2.) / 4.,
-                              -1. / (d + 4.)), endog)
+                              -1. / (d + 4.)), exog)
 
 
 def scotts_covariance(model=None):
@@ -57,9 +57,9 @@ def scotts_covariance(model=None):
 
         \tau = n^\frac{-1}{d+4}
     """
-    endog = np.atleast_2d(model.endog)
-    d, n = endog.shape
-    return variance_bandwidth(np.power(n, -1. / (d + 4.)), endog)
+    exog = np.atleast_2d(model.exog)
+    d, n = exog.shape
+    return variance_bandwidth(np.power(n, -1. / (d + 4.)), exog)
 
 
 def _botev_fixed_point(t, M, I, a2):
@@ -100,7 +100,7 @@ class botev_bandwidth(object):
         """
         Returns the optimal bandwidth based on the data
         """
-        data = model.endog
+        data = model.exog
         N = 2 ** 10 if self.N is None else int(2 ** np.ceil(np.log2(self.N)))
         lower = getattr(model, 'lower', None)
         upper = getattr(model, 'upper', None)
