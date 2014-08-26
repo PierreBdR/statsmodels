@@ -45,8 +45,7 @@ def silverman_covariance(model):
     """
     exog = np.atleast_2d(model.exog)
     d, n = exog.shape
-    return variance_bandwidth(np.power(n * (d + 2.) / 4.,
-                              -1. / (d + 4.)), exog)
+    return variance_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
 
 
 def scotts_covariance(model=None):
@@ -59,7 +58,7 @@ def scotts_covariance(model=None):
     """
     exog = np.atleast_2d(model.exog)
     d, n = exog.shape
-    return variance_bandwidth(np.power(n, -1. / (d + 4.)), exog)
+    return variance_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
 
 
 def _botev_fixed_point(t, M, I, a2):
