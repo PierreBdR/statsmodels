@@ -67,7 +67,7 @@ class KDE(object):
     r"""
     Prepare a nD kernel density estimation, possible on a bounded domain.
 
-    :param ndarray endog: 2D array DxN with the N input endog points in D dimension.
+    :param ndarray exog: 2D array DxN with the N input points in D dimension.
     :param dict kwords: setting attributes at construction time.
         Any named argument will be equivalent to setting the property
         after the fact. For example::
@@ -80,8 +80,8 @@ class KDE(object):
             >>> k = KDE1D(xs)
             >>> k.lower = 0
     """
-    def __init__(self, endog, **kwords):
-        self._endog = None
+    def __init__(self, exog, **kwords):
+        self._exog = None
         self._upper = None
         self._lower = None
         self._kernel = kernels.normal_kernel
@@ -96,7 +96,7 @@ class KDE(object):
         for n in kwords:
             setattr(self, n, kwords[n])
 
-        self.endog = endog
+        self.exog = exog
 
         if self._bw is None and self._covariance is None:
             self.covariance = bandwidths.scotts_covariance
@@ -116,13 +116,13 @@ class KDE(object):
         return res
 
     @property
-    def endog(self):
-        return self._endog
+    def exog(self):
+        return self._exog
 
-    @endog.setter
-    def endog(self, xs):
-        self._endog = np.atleast_2d(xs)
-        assert len(self._endog.shape) == 2, "The attribute 'endog' must be a one-dimension array"
+    @exog.setter
+    def exog(self, xs):
+        self._exog = np.atleast_2d(xs)
+        assert len(self._exog.shape) == 2, "The attribute 'exog' must be a one-dimension array"
 
     @property
     def kernel(self):
@@ -271,14 +271,14 @@ class KDE(object):
         """
         Return the number of dimensions of the problem
         """
-        return self._endog.shape[0]
+        return self._exog.shape[0]
 
     @property
     def npts(self):
         """
-        Return the number of points in the endogenous dataset.
+        Return the number of points in the exogenous dataset.
         """
-        return self._endog.shape[1]
+        return self._exog.shape[1]
 
     @property
     def method(self):

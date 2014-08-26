@@ -64,18 +64,18 @@ def generate_grid(kde, N=None, cut=None):
     if cut is None:
         cut = kde.kernel.cut
     if kde.lower == -np.inf:
-        lower = np.min(kde.endog) - cut * kde.bandwidth
+        lower = np.min(kde.exog) - cut * kde.bandwidth
     else:
         lower = kde.lower
     if kde.upper == np.inf:
-        upper = np.max(kde.endog) + cut * kde.bandwidth
+        upper = np.max(kde.exog) + cut * kde.bandwidth
     else:
         upper = kde.upper
     return np.linspace(lower, upper, N)
 
 def compute_bandwidth1d(kde):
     """
-    Compute the bandwidth and covariance for the model, based of its endog attribute
+    Compute the bandwidth and covariance for the model, based of its exog attribute
     """
     if kde.bandwidth is not None:
         if callable(kde.bandwidth):
@@ -108,7 +108,7 @@ class KDE1DMethod(object):
     name = 'unbounded'
 
     def __init__(self):
-        self._endog = None
+        self._exog = None
         self._upper = None
         self._lower = None
         self._kernel = None
@@ -141,7 +141,7 @@ class KDE1DMethod(object):
             bw, cov = compute_bandwidth1d(kde)
             fitted.bw = bw
             fitted.covariance = cov
-        fitted._endog = kde.endog.reshape((kde.npts,))
+        fitted._exog = kde.exog.reshape((kde.npts,))
         fitted._upper = float(kde.upper)
         fitted._lower = float(kde.lower)
         fitted._kernel = kde.kernel
@@ -184,7 +184,7 @@ class KDE1DMethod(object):
         """
         Number of points in the setup
         """
-        return self._endog.shape[0]
+        return self._exog.shape[0]
 
     @property
     def bandwidth(self):
@@ -215,11 +215,11 @@ class KDE1DMethod(object):
         self._bw = np.sqrt(val)
 
     @property
-    def endog(self):
+    def exog(self):
         """
         Input points
         """
-        return self._endog
+        return self._exog
 
     @property
     def lower(self):
@@ -249,7 +249,7 @@ class KDE1DMethod(object):
     @property
     def weights(self):
         """
-        Weights for the points in ``KDE1DMethod.endog``
+        Weights for the points in ``KDE1DMethod.exog``
         """
         return self._weights
 
@@ -302,12 +302,12 @@ class KDE1DMethod(object):
         :Default: Direct implementation of the formula for unbounded pdf
             computation.
         """
-        endog = self.endog
+        exog = self.exog
         points = points[..., np.newaxis]
 
         bw = self.bandwidth * self.adjust
 
-        z = (points - endog) / bw
+        z = (points - exog) / bw
 
         kernel = self.kernel
 
@@ -351,11 +351,11 @@ class KDE1DMethod(object):
         :Default: Direct implementation of the formula for unbounded CDF
             computation.
         """
-        endog = self.endog
+        exog = self.exog
         points = points[..., np.newaxis]
         bw = self.bandwidth * self.adjust
 
-        z = (points - endog) / bw
+        z = (points - exog) / bw
 
         kernel = self.kernel
 
@@ -537,9 +537,11 @@ class KDE1DMethod(object):
             :py:func:`generate_grid`
         """
         N = self.grid_size(N)
-        g = generate_grid(self, N, cut)
-        out = np.empty(g.shape, dtype=float)
-        return g, self.cdf(g, out)
+        if N <= 2**11:
+            g = generate_grid(self, N, cut)
+            out = np.empty(g.shape, dtype=float)
+            return g, self.cdf(g, out)
+        return self.numeric_cdf_grid(N, cut)
 
     def icdf_grid(self, N=None, cut=None):
         """
@@ -684,7 +686,7 @@ class KDE1DMethod(object):
         Compute the CDF on a grid using a trivial, but fast, numeric 
         integration of the pdf.
         """
-        pts, pdf = self.grid(self, N, cut)
+        pts, pdf = self.grid(N, cut)
         cdf = integrate.cumtrapz(pdf, pts, initial=0)
         return pts, cdf
 
@@ -693,65 +695,153 @@ class KDE1DMethod(object):
             return 2**10
         return N
 
-Unbounded = KDE1DMethod
-
-class Renormalization(KDE1DMethod):
+class Cyclic(KDE1DMethod):
     r"""
-    This method consists in using the normal kernel method, but renormalize 
-    to only take into account the part of the kernel within the domain of the 
-    density [1]_.
+    This method assumes cyclic boundary conditions and works only for closed 
+    boundaries.
 
-    The kernel is then replaced with:
+    The estimation is done with a modified kernel given by:
 
     .. math::
 
-        \hat{K}(x;X,h,L,U) \triangleq \frac{1}{a_0(u,l)} K(z)
+        \hat{K}(x; X, h, L, U) \triangleq K(z)
+        + K\left(z - \frac{U-L}{h}\right)
+        + K\left(z + \frac{U-L}{h}\right)
 
     where:
 
     .. math::
 
-        z = \frac{x-X}{h} \qquad l = \frac{L-x}{h} \qquad u = \frac{U-x}{h}
+        z = \frac{x-X}{h}
 
+    When computing grids, if the bandwidth is constant, the result is computing 
+    using FFT.
     """
 
-    name = 'renormalization'
+    name = 'cyclic'
 
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
+        if not self.closed:
+            raise ValueError("Cyclic boundary conditions can only be used with "
+                             "closed or un-bounded domains.")
 
-        endog = self.endog
-        points = points[..., np.newaxis]
+        exog = self.exog
+        points = np.atleast_1d(points)[..., np.newaxis]
+
+        # Make sure points are between the bounds
+        if any(points < self.lower) or any(points > self.upper):
+            points = points - self.lower
+            points %= self.upper - self.lower
+            points += self.lower
 
         bw = self.bandwidth * self.adjust
 
-        l = (points - self.lower) / bw
-        u = (points - self.upper) / bw
-        z = (points - endog) / bw
+        z = (points - exog) / bw
+        L = self.lower
+        U = self.upper
+
+        span = (U - L) / bw
 
         kernel = self.kernel
 
-        a1 = (kernel.cdf(l) - kernel.cdf(u))
+        terms = kernel(z)
+        terms += kernel(z + span) # Add points to the left
+        terms += kernel(z - span) # Add points to the right
 
-        terms = kernel(z) * ((self.weights / bw) / a1)
-
+        terms *= self.weights / bw
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
         return out
 
+
     def cdf(self, points, out):
         if not self.bounded:
-            return KDE1DMethod.cdf(self, self, points, out)
-        return self.numeric_cdf(points, out)
+            return KDE1DMethod.cdf(self, points, out)
+        if not self.closed:
+            raise ValueError("Cyclic boundary conditions can only be used with "
+                             "closed or unbounded domains.")
 
-    def cdf_grid(self, N=None, cut=None):
+        exog = self.exog
+        points = np.atleast_1d(points)[..., np.newaxis]
+
+        # Make sure points are between the bounds
+        if any(points < self.lower) or any(points > self.upper):
+            points = points - self.lower
+            points %= self.upper - self.lower
+            points += self.lower
+
+        bw = self.bandwidth * self.adjust
+
+        z = (points - exog) / bw
+        L = self.lower
+        U = self.upper
+
+        span = (U - L) / bw
+
+        kernel = self.kernel
+
+        terms = kernel.cdf(z)
+        terms -= kernel.cdf((L - exog) / bw) # Remove the parts left of the lower bound
+
+        terms += kernel.cdf(z + span) # Repeat on the left
+        terms -= kernel.cdf((L - exog) / bw + span) # Remove parts left of lower bounds
+
+        terms += kernel.cdf(z - span) # Repeat on the right
+
+        terms *= self.weights
+        terms.sum(axis=-1, out=out)
+        out /= self.total_weights
+
+        return out
+
+    def grid(self, N=None, cut=None):
+        """
+        FFT-based estimation of KDE estimation, i.e. with cyclic boundary
+        conditions. This works only for closed domains, fixed bandwidth
+        (i.e. adjust = 1) and gaussian kernel.
+        """
+        if self.adjust.shape:
+            return KDE1DMethod.grid(self, N, cut)
+        if self.bounded and not self.closed:
+            raise ValueError("Error, cyclic boundary conditions require "
+                             "a closed or un-bounded domain.")
+        bw = self.bandwidth * self.adjust
+        data = self.exog
+        N = self.grid_size(N)
+
+        lower = self.lower
+        upper = self.upper
+
+        if upper == np.inf:
+            lower = np.min(data) - cut * self.bandwidth
+            upper = np.max(data) + cut * self.bandwidth
+
+        R = upper - lower
+        weights = self.weights
+        if not weights.shape:
+            weights = None
+
+        DataHist, mesh = fast_linbin(data, lower, upper, N, weights=weights, cyclic=True)
+        DataHist = DataHist / self.total_weights
+        FFTData = np.fft.rfft(DataHist)
+
+        t_star = (2 * bw / R)
+        gp = np.arange(len(FFTData)) * np.pi * t_star
+        smth = self.kernel.fft(gp)
+
+        SmoothFFTData = FFTData * smth
+        density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
+        return mesh, density
+
+    def grid_size(self, N=None):
         if N is None:
-            N = 2**10
-        if not self.bounded or N <= 2**11:
-            return KDE1DMethod.cdf_grid(self, N, cut)
-        return self.numeric_cdf_grid(N, cut)
+            return 2**14
+        return N # 2 ** int(np.ceil(np.log2(N)))
+
+Unbounded = Cyclic
 
 class Reflection(KDE1DMethod):
     r"""
@@ -785,7 +875,7 @@ class Reflection(KDE1DMethod):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
 
-        endog = self.endog
+        exog = self.exog
         points = points[..., np.newaxis]
 
         # Make sure points are between the bounds, with reflection if needed
@@ -798,8 +888,8 @@ class Reflection(KDE1DMethod):
 
         bw = self.bandwidth * self.adjust
 
-        z = (points - endog) / bw
-        z1 = (points + endog) / bw
+        z = (points - exog) / bw
+        z1 = (points + exog) / bw
         L = self.lower
         U = self.upper
 
@@ -823,7 +913,7 @@ class Reflection(KDE1DMethod):
         if not self.bounded:
             return KDE1DMethod.cdf(self, points, out)
 
-        endog = self.endog
+        exog = self.exog
         points = points[..., np.newaxis]
 
         # Make sure points are between the bounds, with reflection if needed
@@ -836,8 +926,8 @@ class Reflection(KDE1DMethod):
 
         bw = self.bandwidth * self.adjust
 
-        z = (points - endog) / bw
-        z1 = (points + endog) / bw
+        z = (points - exog) / bw
+        z1 = (points + exog) / bw
         L = self.lower
         U = self.upper
 
@@ -846,9 +936,9 @@ class Reflection(KDE1DMethod):
         terms = kernel.cdf(z)
 
         if L > -np.inf:
-            terms -= kernel.cdf((L - endog) / bw) # Remove the truncated part on the left
+            terms -= kernel.cdf((L - exog) / bw) # Remove the truncated part on the left
             terms += kernel.cdf(z1 - (2 * L / bw)) # Add the reflected part
-            terms -= kernel.cdf((endog - L) / bw) # Remove the truncated part from the reflection
+            terms -= kernel.cdf((exog - L) / bw) # Remove the truncated part from the reflection
 
         if U < np.inf:
             terms += kernel.cdf(z1 - (2 * U / bw)) # Add the reflected part
@@ -873,7 +963,7 @@ class Reflection(KDE1DMethod):
             return KDE1DMethod.grid(self, N, cut)
 
         bw = self.bandwidth * self.adjust
-        data = self.endog
+        data = self.exog
         N = self.grid_size(N)
 
         if cut is None:
@@ -916,7 +1006,73 @@ class Reflection(KDE1DMethod):
             return 2**14
         return 2 ** int(np.ceil(np.log2(N)))
 
-class LinearCombination(KDE1DMethod):
+class Renormalization(Unbounded):
+    r"""
+    This method consists in using the normal kernel method, but renormalize 
+    to only take into account the part of the kernel within the domain of the 
+    density [1]_.
+
+    The kernel is then replaced with:
+
+    .. math::
+
+        \hat{K}(x;X,h,L,U) \triangleq \frac{1}{a_0(u,l)} K(z)
+
+    where:
+
+    .. math::
+
+        z = \frac{x-X}{h} \qquad l = \frac{L-x}{h} \qquad u = \frac{U-x}{h}
+
+    """
+
+    name = 'renormalization'
+
+    def pdf(self, points, out):
+        if not self.bounded:
+            return Cyclic.pdf(self, points, out)
+
+        exog = self.exog
+        points = points[..., np.newaxis]
+
+        bw = self.bandwidth * self.adjust
+
+        l = (points - self.lower) / bw
+        u = (points - self.upper) / bw
+        z = (points - exog) / bw
+
+        kernel = self.kernel
+
+        a1 = (kernel.cdf(l) - kernel.cdf(u))
+
+        terms = kernel(z) * ((self.weights / bw) / a1)
+
+        terms.sum(axis=-1, out=out)
+        out /= self.total_weights
+
+        return out
+
+    def cdf(self, points, out):
+        if not self.bounded:
+            return super(self, Renormalization).cdf(points, out)
+        return self.numeric_cdf(points, out)
+
+    def cdf_grid(self, N=None, cut=None):
+        if not self.bounded:
+            return super(self, Renormalization).cdf_grid(N, cut)
+        return KDE1DMethod.cdf_grid(self, N, cut)
+
+    def grid(self, N=None, cut=None):
+        if not self.bounded:
+            return super(self, Renormalization).grid(N, cut)
+        return KDE1DMethod.grid(self, N, cut)
+
+    def grid_size(self, N=None):
+        if self.bounded:
+            return KDE1DMethod.grid_size(N)
+        return Cyclic.grid_size(N)
+
+class LinearCombination(Unbounded):
     r"""
     This method uses the linear combination correction published in [1]_.
 
@@ -941,14 +1097,14 @@ class LinearCombination(KDE1DMethod):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
 
-        endog = self.endog
+        exog = self.exog
         points = np.atleast_1d(points)[..., np.newaxis]
 
         bw = self.bandwidth * self.adjust
 
         l = (self.lower - points) / bw
         u = (self.upper - points) / bw
-        z = (points - endog) / bw
+        z = (points - exog) / bw
 
         kernel = self.kernel
 
@@ -969,173 +1125,23 @@ class LinearCombination(KDE1DMethod):
 
     def cdf(self, points, out):
         if not self.bounded:
-            return KDE1DMethod.cdf(self, points, out)
+            return super(self, LinearCombination).cdf(points, out)
         return self.numeric_cdf(points, out)
 
     def cdf_grid(self, N=None, cut=None):
-        if N is None:
-            N = 2**10
-        if not self.bounded or N <= 2**11:
-            return KDE1DMethod.cdf_grid(self, N, cut)
-        return self.numeric_cdf_grid(N, cut)
-
-class Cyclic(KDE1DMethod):
-    r"""
-    This method assumes cyclic boundary conditions and works only for closed 
-    boundaries.
-
-    The estimation is done with a modified kernel given by:
-
-    .. math::
-
-        \hat{K}(x; X, h, L, U) \triangleq K(z)
-        + K\left(z - \frac{U-L}{h}\right)
-        + K\left(z + \frac{U-L}{h}\right)
-
-    where:
-
-    .. math::
-
-        z = \frac{x-X}{h}
-
-    When computing grids, if the bandwidth is constant, the result is computing 
-    using FFT.
-    """
-
-    name = 'cyclic'
-
-    def pdf(self, points, out):
         if not self.bounded:
-            return KDE1DMethod.pdf(self, points, out)
-        if not self.closed:
-            raise ValueError("Cyclic boundary conditions can only be used with "
-                             "closed or un-bounded domains.")
-
-        endog = self.endog
-        points = np.atleast_1d(points)[..., np.newaxis]
-
-        # Make sure points are between the bounds
-        if any(points < self.lower) or any(points > self.upper):
-            points = points - self.lower
-            points %= self.upper - self.lower
-            points += self.lower
-
-        bw = self.bandwidth * self.adjust
-
-        z = (points - endog) / bw
-        L = self.lower
-        U = self.upper
-
-        span = (U - L) / bw
-
-        kernel = self.kernel
-
-        terms = kernel(z)
-        terms += kernel(z + span) # Add points to the left
-        terms += kernel(z - span) # Add points to the right
-
-        terms *= self.weights / bw
-        terms.sum(axis=-1, out=out)
-        out /= self.total_weights
-
-        return out
-
-
-    def cdf(self, points, out):
-        if not self.bounded:
-            return KDE1DMethod.cdf(self, points, out)
-        if not self.closed:
-            raise ValueError("Cyclic boundary conditions can only be used with "
-                             "closed or unbounded domains.")
-
-        endog = self.endog
-        points = np.atleast_1d(points)[..., np.newaxis]
-
-        # Make sure points are between the bounds
-        if any(points < self.lower) or any(points > self.upper):
-            points = points - self.lower
-            points %= self.upper - self.lower
-            points += self.lower
-
-        bw = self.bandwidth * self.adjust
-
-        z = (points - endog) / bw
-        L = self.lower
-        U = self.upper
-
-        span = (U - L) / bw
-
-        kernel = self.kernel
-
-        terms = kernel.cdf(z)
-        terms -= kernel.cdf((L - endog) / bw) # Remove the parts left of the lower bound
-
-        terms += kernel.cdf(z + span) # Repeat on the left
-        terms -= kernel.cdf((L - endog) / bw + span) # Remove parts left of lower bounds
-
-        terms += kernel.cdf(z - span) # Repeat on the right
-
-        terms *= self.weights
-        terms.sum(axis=-1, out=out)
-        out /= self.total_weights
-
-        return out
+            return super(self, Renormalization).cdf_grid(N, cut)
+        return KDE1DMethod.cdf_grid(self, N, cut)
 
     def grid(self, N=None, cut=None):
-        """
-        FFT-based estimation of KDE estimation, i.e. with cyclic boundary
-        conditions. This works only for closed domains, fixed bandwidth
-        (i.e. adjust = 1) and gaussian kernel.
-        """
-        if self.adjust.shape:
-            return KDE1DMethod.grid(self, N, cut)
-        if self.bounded and not self.closed:
-            raise ValueError("Error, cyclic boundary conditions require "
-                             "a closed or un-bounded domain.")
-        bw = self.bandwidth * self.adjust
-        data = self.endog
-        N = self.grid_size(N)
-
-        lower = self.lower
-        upper = self.upper
-
-        if upper == np.inf:
-            lower = np.min(data) - cut * self.bandwidth
-            upper = np.max(data) + cut * self.bandwidth
-
-        R = upper - lower
-        weights = self.weights
-        if not weights.shape:
-            weights = None
-
-        DataHist, mesh = fast_linbin(data, lower, upper, N, weights=weights, cyclic=True)
-        DataHist = DataHist / self.total_weights
-        FFTData = np.fft.rfft(DataHist)
-
-        t_star = (2 * bw / R)
-        gp = np.arange(len(FFTData)) * np.pi * t_star
-        smth = self.kernel.fft(gp)
-
-        SmoothFFTData = FFTData * smth
-        density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
-        return mesh, density
-
-    def cdf_grid(self, N=None, cut=None):
-        if self.adjust.shape:
-            return KDE1DMethod.cdf_grid(self, N, cut)
-        if not self.closed:
-            raise ValueError("Error, cyclic boundary conditions require "
-                             "a closed domain.")
-        N = self.grid_size(N)
-
-        if N <= 2**12:
-            return KDE1DMethod.cdf_grid(self, N, cut)
-        return self.numeric_cdf_grid(N, cut)
+        if not self.bounded:
+            return super(self, Renormalization).grid(N, cut)
+        return KDE1DMethod.grid(self, N, cut)
 
     def grid_size(self, N=None):
-        if N is None:
-            return 2**14
-        return 2 ** int(np.ceil(np.log2(N)))
+        if self.bounded:
+            return KDE1DMethod.grid_size(N)
+        return Cyclic.grid_size(N)
 
 Transform = namedtuple('Tranform', ['__call__', 'inv', 'Dinv'])
 
@@ -1295,7 +1301,7 @@ class TransformKDE(KDE1DMethod):
         trans_kde = _transKDE(self)
         trans_kde.lower = self.trans(fitted.lower)
         trans_kde.upper = self.trans(fitted.upper)
-        trans_kde.endog = self.trans(fitted.endog)
+        trans_kde.exog = self.trans(fitted.exog)
 
         copy_attrs = [ 'weights', 'adjust', 'kernel'
                      , 'bandwidth', 'covariance'
