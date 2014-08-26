@@ -38,7 +38,9 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
 from .kde_utils import make_ufunc, namedtuple, numpy_trans_idx, numpy_method_idx
-from .fast_linbin import fast_linbin
+from .fast_linbin import fast_linbin as fast_bin
+#from .fast_linbin import fast_bin
+#from .binning import fast_bin
 from copy import copy as shallow_copy
 
 def generate_grid(kde, N=None, cut=None):
@@ -82,7 +84,7 @@ def compute_bandwidth1d(kde):
             bw = float(kde.bandwidth(kde))
         else:
             bw = float(kde.bandwidth)
-        return bw, cov*cov
+        return bw, bw*bw
     elif kde.covariance is not None:
         if callable(kde.covariance):
             cov = float(kde.covariance(kde))
@@ -139,8 +141,8 @@ class KDE1DMethod(object):
         fitted = self.copy()
         if compute_bandwidth:
             bw, cov = compute_bandwidth1d(kde)
-            fitted.bw = bw
-            fitted.covariance = cov
+            fitted._bw = bw
+            fitted._cov = cov
         fitted._exog = kde.exog.reshape((kde.npts,))
         fitted._upper = float(kde.upper)
         fitted._lower = float(kde.lower)
@@ -149,6 +151,7 @@ class KDE1DMethod(object):
         fitted._adjust = kde.adjust
         fitted._total_weights = kde.total_weights
         fitted._kernel = kde.kernel(1)
+        assert callable(fitted._kernel)
         return fitted
 
     def copy(self):
@@ -205,7 +208,7 @@ class KDE1DMethod(object):
         """
         Square of the selected bandwidth
         """
-        return self._bw
+        return self._cov
 
     @covariance.setter
     def covariance(self, val):
@@ -326,6 +329,7 @@ class KDE1DMethod(object):
         """
         return self.pdf(points, out)
 
+    @numpy_method_idx
     def cdf(self, points, out):
         r"""
         Compute the CDF of the estimated distribution, defined as:
@@ -367,6 +371,7 @@ class KDE1DMethod(object):
 
         return out
 
+    @numpy_method_idx
     def icdf(self, points, out):
         r"""
         Compute the inverse cumulative distribution (quantile) function, 
@@ -415,6 +420,7 @@ class KDE1DMethod(object):
 
         return find_inverse(points, coarse_result, out=out)
 
+    @numpy_method_idx
     def sf(self, points, out):
         r"""
         Compute the survival function, defined as:
@@ -434,6 +440,7 @@ class KDE1DMethod(object):
         out *= -1
         return out
 
+    @numpy_method_idx
     def isf(self, points, out):
         r"""
         Compute the inverse survival function, defined as:
@@ -450,6 +457,7 @@ class KDE1DMethod(object):
         """
         return self.icdf(1-points, out)
 
+    @numpy_method_idx
     def hazard(self, points, out):
         r"""
         Compute the hazard function evaluated on the points.
@@ -476,6 +484,7 @@ class KDE1DMethod(object):
         out /= sf
         return out
 
+    @numpy_method_idx
     def cumhazard(self, points, out):
         r"""
         Compute the cumulative hazard function evaluated on the points.
@@ -619,7 +628,7 @@ class KDE1DMethod(object):
             estimated on, and the estimations.
         :Default: Compute explicitly :math:`pdf(x) / sf(x)`
         """
-        points, out = self.grid(self, N, cut)
+        points, out = self.grid(N, cut)
         _, sf = self.sf_grid(N, cut)
         sf[sf < 0] = 0 # Some methods can produce negative sf
         out /= sf
@@ -650,6 +659,7 @@ class KDE1DMethod(object):
         """
         return self.name
 
+    @numpy_method_idx
     def numeric_cdf(self, points, out):
         """
         Provide a numeric approximation of the CDF based on integrating the pdf 
@@ -720,6 +730,7 @@ class Cyclic(KDE1DMethod):
 
     name = 'cyclic'
 
+    @numpy_method_idx
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -756,7 +767,7 @@ class Cyclic(KDE1DMethod):
 
         return out
 
-
+    @numpy_method_idx
     def cdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.cdf(self, points, out)
@@ -816,6 +827,8 @@ class Cyclic(KDE1DMethod):
         upper = self.upper
 
         if upper == np.inf:
+            if cut is None:
+                cut = self.kernel.cut
             lower = np.min(data) - cut * self.bandwidth
             upper = np.max(data) + cut * self.bandwidth
 
@@ -824,7 +837,7 @@ class Cyclic(KDE1DMethod):
         if not weights.shape:
             weights = None
 
-        DataHist, mesh = fast_linbin(data, lower, upper, N, weights=weights, cyclic=True)
+        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=False)
         DataHist = DataHist / self.total_weights
         FFTData = np.fft.rfft(DataHist)
 
@@ -871,6 +884,7 @@ class Reflection(KDE1DMethod):
 
     name = 'reflection'
 
+    @numpy_method_idx
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -909,6 +923,7 @@ class Reflection(KDE1DMethod):
 
         return out
 
+    @numpy_method_idx
     def cdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.cdf(self, points, out)
@@ -949,7 +964,6 @@ class Reflection(KDE1DMethod):
 
         return out
 
-
     def grid(self, N=None, cut=None):
         """
         DCT-based estimation of KDE estimation, i.e. with reflection boundary 
@@ -985,7 +999,7 @@ class Reflection(KDE1DMethod):
         if not weights.shape:
             weights = None
 
-        DataHist, mesh = fast_linbin(data, lower, upper, N, weights=weights, cyclic=False)
+        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=False)
 
         DataHist = DataHist / self.total_weights
         DCTData = fftpack.dct(DataHist, norm=None)
@@ -1028,6 +1042,7 @@ class Renormalization(Unbounded):
 
     name = 'renormalization'
 
+    @numpy_method_idx
     def pdf(self, points, out):
         if not self.bounded:
             return Cyclic.pdf(self, points, out)
@@ -1052,6 +1067,7 @@ class Renormalization(Unbounded):
 
         return out
 
+    @numpy_method_idx
     def cdf(self, points, out):
         if not self.bounded:
             return super(self, Renormalization).cdf(points, out)
@@ -1093,6 +1109,7 @@ class LinearCombination(Unbounded):
 
     name = 'linear combination'
 
+    @numpy_method_idx
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -1123,7 +1140,7 @@ class LinearCombination(Unbounded):
 
         return out
 
-    def cdf(self, points, out):
+    def cdf(self, points, out=None):
         if not self.bounded:
             return super(self, LinearCombination).cdf(points, out)
         return self.numeric_cdf(points, out)
@@ -1319,6 +1336,7 @@ class TransformKDE(KDE1DMethod):
 
         return fitted
 
+    @numpy_method_idx
     def pdf(self, points, out):
         trans = self.trans
         pts = trans(points)
@@ -1334,7 +1352,7 @@ class TransformKDE(KDE1DMethod):
         trans.inv(xs, out=xs)
         return xs, out
 
-    def cdf(self, points, out):
+    def cdf(self, points, out=None):
         return self.method.cdf(self.trans(points), out)
 
     def cdf_grid(self, N=None, cut=None):
@@ -1342,30 +1360,30 @@ class TransformKDE(KDE1DMethod):
         self.trans.inv(xs, out=xs)
         return xs, ys
 
-    def sf(self, kde, points, out):
-        return self.method.sf(self.trans_kde, self.trans(points), out)
+    def sf(self, points, out=None):
+        return self.method.sf(self.trans(points), out)
 
     def sf_grid(self, kde, N=None, cut=None):
-        xs, ys = self.method.sf_grid(self.trans_kde, N, cut)
+        xs, ys = self.method.sf_grid(N, cut)
         return self.trans.inv(xs), ys
 
-    def icdf(self, kde, points, out):
-        self.method.icdf(self.trans_kde, points, out)
+    def icdf(self, points, out=None):
+        out = self.method.icdf(points, out)
         self.trans.inv(out, out=out)
         return out
 
-    def icdf_grid(self, kde, N=None, cut=None):
-        xs, ys = self.method.icdf_grid(self.trans_kde, N, cut)
+    def icdf_grid(self, N=None, cut=None):
+        xs, ys = self.method.icdf_grid(N, cut)
         self.trans.inv(ys, out=ys)
         return xs, ys
 
-    def isf(self, kde, points, out):
-        self.method.isf(self.trans_kde, points, out)
+    def isf(self, points, out = None):
+        out = self.method.isf(points, out)
         self.trans.inv(out, out=out)
         return out
 
-    def isf_grid(self, kde, N=None, cut=None):
-        xs, ys = self.method.isf_grid(self.trans_kde, N, cut)
+    def isf_grid(self, N=None, cut=None):
+        xs, ys = self.method.isf_grid(N, cut)
         self.trans.inv(ys, out=ys)
         return xs, ys
 
