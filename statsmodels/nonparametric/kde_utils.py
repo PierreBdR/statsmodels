@@ -9,7 +9,7 @@ from collections import OrderedDict
 from keyword import iskeyword as _iskeyword
 from operator import itemgetter as _itemgetter
 import sys
-from .compat import text_type
+from ..compat.python import string_types
 import numpy as np
 import inspect
 
@@ -153,7 +153,7 @@ def namedtuple(typename, field_names, verbose=False, rename=False):
 
     # Parse and validate the field names.  Validation serves two purposes,
     # generating informative error messages and preventing template injection attacks.
-    if isinstance(field_names, text_type):
+    if isinstance(field_names, string_types):
         # names separated by whitespace and/or commas
         field_names = field_names.replace(',', ' ').split()
     field_names = tuple(map(str, field_names))

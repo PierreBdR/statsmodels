@@ -321,7 +321,10 @@ ext_data = dict(
                   "depends" : ["statsmodels/tsa/kalmanf/capsule.h"],
                   "sources" : []},
 
-        linbin = {"name" : "statsmodels/nonparametric/linbin.c",
+        _kernels = {"name" : "statsmodels/nonparametric/_kernels.c",
+                 "depends" : [],
+                 "sources" : []},
+        fast_linbin = {"name" : "statsmodels/nonparametric/fast_linbin.c",
                  "depends" : [],
                  "sources" : []},
         _smoothers_lowess = {"name" : "statsmodels/nonparametric/_smoothers_lowess.c",

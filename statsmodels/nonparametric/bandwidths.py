@@ -4,7 +4,23 @@ from scipy import fftpack, optimize
 from .kde_utils import large_float, finite
 from statsmodels.compat.python import range
 
-def variance_bandwidth(factor, xdata):
+def _select_sigma(X):
+    """
+    Returns the smaller of std(X, ddof=1) or normalized IQR(X) over axis 0.
+
+    References
+    ----------
+    Silverman (1986) p.47
+    """
+#    normalize = norm.ppf(.75) - norm.ppf(.25)
+    normalize = 1.349
+#    IQR = np.subtract.reduce(percentile(X, [75,25],
+#                             axis=axis), axis=axis)/normalize
+    IQR = (sap(X, 75) - sap(X, 25))/normalize
+    return np.minimum(np.std(X, axis=0, ddof=1), IQR)
+
+
+def variance_bandwidth(factor, endog):
     r"""
     Returns the covariance matrix:
 
@@ -14,12 +30,12 @@ def variance_bandwidth(factor, xdata):
 
     where :math:`\tau` is a correcting factor that depends on the method.
     """
-    data_covariance = np.atleast_2d(np.cov(xdata, rowvar=1, bias=False))
+    data_covariance = np.atleast_2d(np.cov(endog, rowvar=1, bias=False))
     sq_bandwidth = data_covariance * factor * factor
     return sq_bandwidth
 
 
-def silverman_covariance(xdata, model=None):
+def silverman_covariance(model):
     r"""
     The Silverman bandwidth is defined as a variance bandwidth with factor:
 
@@ -27,13 +43,13 @@ def silverman_covariance(xdata, model=None):
 
         \tau = \left( n \frac{d+2}{4} \right)^\frac{-1}{d+4}
     """
-    xdata = np.atleast_2d(xdata)
-    d, n = xdata.shape
+    endog = np.atleast_2d(model.endog)
+    d, n = endog.shape
     return variance_bandwidth(np.power(n * (d + 2.) / 4.,
-                              -1. / (d + 4.)), xdata)
+                              -1. / (d + 4.)), endog)
 
 
-def scotts_covariance(xdata, model=None):
+def scotts_covariance(model=None):
     r"""
     The Scotts bandwidth is defined as a variance bandwidth with factor:
 
@@ -41,9 +57,9 @@ def scotts_covariance(xdata, model=None):
 
         \tau = n^\frac{-1}{d+4}
     """
-    xdata = np.atleast_2d(xdata)
-    d, n = xdata.shape
-    return variance_bandwidth(np.power(n, -1. / (d + 4.)), xdata)
+    endog = np.atleast_2d(model.endog)
+    d, n = endog.shape
+    return variance_bandwidth(np.power(n, -1. / (d + 4.)), endog)
 
 
 def _botev_fixed_point(t, M, I, a2):
@@ -80,10 +96,11 @@ class botev_bandwidth(object):
                   "deprecated. Argument is ignored")
         self.N = N
 
-    def __call__(self, data, model):
+    def __call__(self, model):
         """
         Returns the optimal bandwidth based on the data
         """
+        data = model.endog
         N = 2 ** 10 if self.N is None else int(2 ** np.ceil(np.log2(self.N)))
         lower = getattr(model, 'lower', None)
         upper = getattr(model, 'upper', None)

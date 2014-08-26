@@ -11,40 +11,8 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .utils import make_ufunc
-from . import _kernels_py
-
-from .cyth import HAS_CYTHON
-
-kernels_imp = None
-
-
-def usePython():
-    """
-    Force the use of the Python implementation of the kernels
-    """
-    global kernels_imp
-    from .import _kernels_py
-    kernels_imp = _kernels_py
-
-
-def useCython():
-    """
-    Force the use of the Cython implementation of the kernels, if available
-    """
-    global kernels_imp
-    if HAS_CYTHON:
-        from . import _kernels
-        kernels_imp = _kernels
-
-
-if HAS_CYTHON:
-    useCython()
-else:
-    usePython()
-    import sys
-    print("Warning, cannot import Cython kernel functions, "
-          "pure python functions will be used instead", file=sys.stderr)
+from .kde_utils import make_ufunc
+from . import _kernels as kernels_imp
 
 S2PI = np.sqrt(2 * np.pi)
 
@@ -105,6 +73,9 @@ class Kernel1D(object):
     cut = 3.
     lower = -np.inf
     upper = np.inf
+
+    def __init__(self, ndim=1):
+        assert ndim == 1, "Error, this kernel only works in 1D"
 
     def pdf(self, z, out=None):
         r"""
@@ -178,7 +149,6 @@ class Kernel1D(object):
             out = np.empty(z.shape, dtype=float)
         return comp_pm1(z, out=out)
 
-
     def pm2(self, z, out=None):
         r"""
         Returns the second moment of the density function, i.e.:
@@ -209,14 +179,17 @@ class Kernel1D(object):
 
     def fft(self, z, out=None):
         """
-        FFT of the kernel on the points of ``z``. The points will always be provided as a grid with :math:`2^n` points, 
-        representing the whole frequency range to be explored. For convenience, the second half of the points will be 
-        provided as negative values.
+        FFT of the kernel on the points of ``z``. The points will always be 
+        provided as a regular grid spanning the frequencies wanted.
         """
-        z = np.asfarray(z)
-        t_star = 2*np.pi/(z[1]-z[0])**2 / len(z)
-        dz = t_star * (z[1] - z[0])
-        return fftpack.fft(self(z * t_star) * dz).real
+        period = np.pi / (z[1] - z[0])
+        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, 
+                retstep=True)
+        dz = np.roll(dz, len(z))
+        pdf = self.pdf(dz)
+        pdf *= step
+        out[:] = np.fft.rfft(pdf)
+        return out
 
     def dct(self, z, out=None):
         r"""
@@ -226,7 +199,10 @@ class Kernel1D(object):
         z = np.asfarray(z)
         a1 = z[1] - z[0]
         gp = (z / a1 + 0.5) * np.pi / (len(z) * a1)
-        return fftpack.dct(self(gp) * (gp[1] - gp[0])).real
+        out = self.pdf(gp, out=out)
+        out *= gp[1] - gp[0]
+        out[:] = fftpack.dct(out, overwrite_x = True)
+        return out
 
 class normal_kernel1d(Kernel1D):
     """
@@ -421,7 +397,7 @@ class tricube(Kernel1D):
 
     __call__ = pdf
 
-    upper = 1. / _kernels_py.tricube_width
+    upper = 1. / kernels_imp.tricube_width
     lower = -upper
     cut = upper
 
@@ -496,7 +472,7 @@ class Epanechnikov(Kernel1D):
         return kernels_imp.epanechnikov_pdf(xs, out)
     __call__ = pdf
 
-    upper = 1./_kernels_py.epanechnikov_width
+    upper = 1. / kernels_imp.epanechnikov_width
     lower = -upper
     cut = upper
 
