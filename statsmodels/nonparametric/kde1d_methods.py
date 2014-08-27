@@ -37,9 +37,10 @@ References:
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
-from .kde_utils import make_ufunc, namedtuple, numpy_trans_idx, numpy_method_idx
+from .kde_utils import make_ufunc, namedtuple, numpy_trans_idx, numpy_method_idx, finite
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
+from .kernels import Kernel1D
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -151,12 +152,10 @@ class KDE1DMethod(object):
         fitted._exog = kde.exog.reshape((kde.npts,))
         fitted._upper = float(kde.upper)
         fitted._lower = float(kde.lower)
-        fitted._kernel = kde.kernel
+        fitted._kernel = kde.kernel.for_ndim(1)
         fitted._weights = kde.weights
         fitted._adjust = kde.adjust
         fitted._total_weights = kde.total_weights
-        fitted._kernel = kde.kernel(1)
-        assert callable(fitted._kernel)
         return fitted
 
     def copy(self):
@@ -736,6 +735,51 @@ class KDE1DMethod(object):
             return 2**10
         return N
 
+def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
+    """
+    Compute the density estimate using a FFT approximation.
+
+    Parameters
+    ----------
+    exog: ndarray
+        1D array with the data to fit
+    kernel_fft: function
+        Function computing the FFT for the kernel
+    lower: float
+        Lower bound on which to compute the density
+    upper: float
+        Upper bound on which to compute the density
+    N: int
+        Number of buckets to compute
+    weights: ndarray or None
+        Weights of the data, or None if they all have the same weight.
+    total_weights: float
+        Sum of the weights, or len(exog) if weights is None
+
+    Returns
+    -------
+    mesh: ndarray
+        Points on which the density had been evaluated
+    density: ndarray
+        Density evaluated on the mesh
+
+    Notes
+    -----
+    No checks are made to ensure the consistency of the input!
+    """
+    R = upper - lower
+    DataHist, mesh = fast_bin(exog, lower, upper, N, weights=weights, cyclic=True)
+    DataHist = DataHist / total_weights
+    FFTData = np.fft.rfft(DataHist)
+
+    t_star = (2 * bw / R)
+    gp = np.arange(len(FFTData)) * np.pi * t_star
+    smth = kernel_fft(gp)
+
+    SmoothFFTData = FFTData * smth
+    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
+    return mesh, density
+
 class Cyclic(KDE1DMethod):
     r"""
     This method assumes cyclic boundary conditions and works only for closed 
@@ -851,7 +895,7 @@ class Cyclic(KDE1DMethod):
             raise ValueError("Error, cyclic boundary conditions require "
                              "a closed or un-bounded domain.")
         bw = self.bandwidth * self.adjust
-        data = self.exog
+        exog = self.exog
         N = self.grid_size(N)
 
         lower = self.lower
@@ -860,32 +904,74 @@ class Cyclic(KDE1DMethod):
         if upper == np.inf:
             if cut is None:
                 cut = self.kernel.cut
-            lower = np.min(data) - cut * self.bandwidth
-            upper = np.max(data) + cut * self.bandwidth
+            lower = np.min(exog) - cut * self.bandwidth
+            upper = np.max(exog) + cut * self.bandwidth
 
-        R = upper - lower
         weights = self.weights
         if not weights.shape:
             weights = None
 
-        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=True)
-        DataHist = DataHist / self.total_weights
-        FFTData = np.fft.rfft(DataHist)
-
-        t_star = (2 * bw / R)
-        gp = np.arange(len(FFTData)) * np.pi * t_star
-        smth = self.kernel.fft(gp)
-
-        SmoothFFTData = FFTData * smth
-        density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
-        return mesh, density
+        return fftdensity(exog, self.kernel.fft, bw, lower, upper, N, weights, self.total_weights)
 
     def grid_size(self, N=None):
         if N is None:
-            return 2**14
+            if self.adjust.shape:
+                return 2**10
+            return 2**16
         return N # 2 ** int(np.ceil(np.log2(N)))
 
 Unbounded = Cyclic
+
+def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
+    """
+    Compute the density estimate using a DCT approximation.
+
+    Parameters
+    ----------
+    exog: ndarray
+        1D array with the data to fit
+    kernel_dct: function
+        Function computing the DCT of the kernel
+    lower: float
+        Lower bound on which to compute the density
+    upper: float
+        Upper bound on which to compute the density
+    N: int
+        Number of buckets to compute
+    weights: ndarray or None
+        Weights of the data, or None if they all have the same weight.
+    total_weights: float
+        Sum of the weights, or len(exog) if weights is None
+
+    Returns
+    -------
+    mesh: ndarray
+        Points on which the density had been evaluated
+    density: ndarray
+        Density evaluated on the mesh
+
+    Notes
+    -----
+    No checks are made to ensure the consistency of the input!
+    """
+    R = upper - lower
+
+    # Histogram the data to get a crude first approximation of the density
+    DataHist, mesh = fast_bin(exog, lower, upper, N, weights=weights, cyclic=False)
+
+    DataHist = DataHist / total_weights
+    DCTData = fftpack.dct(DataHist, norm=None)
+
+    t_star = bw / R
+    gp = np.arange(N) * np.pi * t_star
+    smth = kernel_dct(gp)
+
+    # Smooth the DCTransformed data using t_star
+    SmDCTData = DCTData * smth
+    # Inverse DCT to get density
+    density = fftpack.idct(SmDCTData, norm=None) / (2 * R)
+
+    return mesh, density
 
 class Reflection(KDE1DMethod):
     r"""
@@ -1008,48 +1094,33 @@ class Reflection(KDE1DMethod):
             return KDE1DMethod.grid(self, N, cut)
 
         bw = self.bandwidth * self.adjust
-        data = self.exog
+        exog = self.exog
         N = self.grid_size(N)
 
         if cut is None:
             cut = self.kernel.cut
 
         if self.lower == -np.inf:
-            lower = np.min(data) - cut * self.bandwidth
+            lower = np.min(exog) - cut * self.bandwidth
         else:
             lower = self.lower
         if self.upper == np.inf:
-            upper = np.max(data) + cut * self.bandwidth
+            upper = np.max(exog) + cut * self.bandwidth
         else:
             upper = self.upper
 
-        R = upper - lower
-
-        # Histogram the data to get a crude first approximation of the density
         weights = self.weights
         if not weights.shape:
             weights = None
 
-        DataHist, mesh = fast_bin(data, lower, upper, N, weights=weights, cyclic=False)
-
-        DataHist = DataHist / self.total_weights
-        DCTData = fftpack.dct(DataHist, norm=None)
-
-        t_star = bw / R
-        gp = np.arange(N) * np.pi * t_star
-        smth = self.kernel.dct(gp)
-
-        # Smooth the DCTransformed data using t_star
-        SmDCTData = DCTData * smth
-        # Inverse DCT to get density
-        density = fftpack.idct(SmDCTData, norm=None) / (2 * R)
-
-        return mesh, density
+        return dctdensity(exog, self.kernel.dct, bw, lower, upper, N, weights, self.total_weights)
 
     def grid_size(self, N=None):
         if N is None:
-            return 2**14
-        return 2 ** int(np.ceil(np.log2(N)))
+            if self.adjust.shape:
+                return 2**10
+            return 2**16
+        return N # 2 ** int(np.ceil(np.log2(N)))
 
 class Renormalization(Unbounded):
     r"""
@@ -1101,23 +1172,62 @@ class Renormalization(Unbounded):
     @numpy_method_idx
     def cdf(self, points, out):
         if not self.bounded:
-            return super(self, Renormalization).cdf(points, out)
+            return super(Renormalization, self).cdf(points, out)
         return self.numeric_cdf(points, out)
-
-    def cdf_grid(self, N=None, cut=None):
-        if not self.bounded:
-            return super(self, Renormalization).cdf_grid(N, cut)
-        return KDE1DMethod.cdf_grid(self, N, cut)
 
     def grid(self, N=None, cut=None):
         if not self.bounded:
-            return super(self, Renormalization).grid(N, cut)
-        return KDE1DMethod.grid(self, N, cut)
+            return super(Renormalization, self).grid(N, cut)
 
-    def grid_size(self, N=None):
-        if self.bounded:
-            return KDE1DMethod.grid_size(N)
-        return Cyclic.grid_size(N)
+        if cut is None:
+            cut = self.kernel.cut
+        N = self.grid_size(N)
+
+        bw = self.bandwidth * self.adjust
+        lower = self.lower
+        upper = self.upper
+        exog = self.exog
+        if not finite(lower):
+            lower = exog.min() - cut*self.bandwidth
+        if not finite(upper):
+            upper = exog.max() + cut*self.bandwidth
+        R = upper - lower
+        weights = self.weights
+        if not weights.shape:
+            weights = None
+        kernel = self.kernel
+
+        # Compute the FFT with enough margin to avoid side effects
+        # here we assume that bw << est_R / 8 otherwise the FFT approximation is bad anyway
+        shift_N = N // 8
+        comp_N = N + N // 4
+        comp_lower = lower - R / 8
+        comp_upper = upper + R / 8
+
+        mesh, density = fftdensity(exog, kernel.fft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
+
+        mesh = mesh[shift_N:shift_N+N]
+        density = density[shift_N:shift_N+N]
+
+        # Apply renormalization
+        l = (mesh - lower) / bw
+        u = (mesh - upper) / bw
+        a1 = (kernel.cdf(l) - kernel.cdf(u))
+
+        density /= a1
+
+        return mesh, density
+
+class _LinearCombinationKernel(Kernel1D):
+    def __init__(self, ker):
+        self._kernel = ker
+
+    def pdf(self, x, out = None):
+        out = self._kernel(x, out)
+        out *= x
+        return out
+
+    __call__ = pdf
 
 class LinearCombination(Unbounded):
     r"""
@@ -1173,23 +1283,59 @@ class LinearCombination(Unbounded):
 
     def cdf(self, points, out=None):
         if not self.bounded:
-            return super(self, LinearCombination).cdf(points, out)
+            return super(LinearCombination, self).cdf(points, out)
         return self.numeric_cdf(points, out)
-
-    def cdf_grid(self, N=None, cut=None):
-        if not self.bounded:
-            return super(self, Renormalization).cdf_grid(N, cut)
-        return KDE1DMethod.cdf_grid(self, N, cut)
 
     def grid(self, N=None, cut=None):
         if not self.bounded:
-            return super(self, Renormalization).grid(N, cut)
-        return KDE1DMethod.grid(self, N, cut)
+            return super(LinearCombination, self).grid(N, cut)
 
-    def grid_size(self, N=None):
-        if self.bounded:
-            return KDE1DMethod.grid_size(N)
-        return Cyclic.grid_size(N)
+        if cut is None:
+            cut = self.kernel.cut
+        N = self.grid_size(N)
+
+        bw = self.bandwidth * self.adjust
+        lower = self.lower
+        upper = self.upper
+        exog = self.exog
+        weights = self.weights
+        if not weights.shape:
+            weights = None
+        kernel = self.kernel
+
+        # Range on which the density is to be estimated
+        est_lower = lower if finite(lower) else exog.min() - cut*self.bandwidth
+        est_upper = upper if finite(upper) else exog.max() + cut*self.bandwidth
+        est_R = est_upper - est_lower
+
+        # Compute the FFT with enough margin to avoid side effects
+        # here we assume that bw << est_R / 8 otherwise the FFT approximation is bad anyway
+        shift_N = N // 8
+        comp_N = N + N // 4
+        comp_lower = est_lower - est_R / 8
+        comp_upper = est_upper + est_R / 8
+        total_weights = self.total_weights
+
+        mesh, density = fftdensity(exog, kernel.fft, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
+        _, z_density = fftdensity(exog, kernel.fft_xfx, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
+
+        mesh = mesh[shift_N:shift_N+N]
+        density = density[shift_N:shift_N+N]
+        z_density = z_density[shift_N:shift_N+N]
+
+        # Apply linear combination approximation
+        l = (lower - mesh) / bw
+        u = (upper - mesh) / bw
+        a0 = kernel.cdf(u) - kernel.cdf(l)
+        a1 = kernel.pm1(-l) - kernel.pm1(-u)
+        a2 = kernel.pm2(u) - kernel.pm2(l)
+
+        density *= a2
+        density -= a1*z_density
+        density /= a2 * a0 - a1 * a1
+        mesh[0] = 0.
+
+        return mesh, density
 
 Transform = namedtuple('Tranform', ['__call__', 'inv', 'Dinv'])
 

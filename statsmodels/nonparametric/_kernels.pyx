@@ -5,11 +5,12 @@
 import numpy as np
 cimport numpy as np
 from math cimport isfinite, erf, fabs
-from libc.math cimport exp, sqrt, M_PI, pow
+from libc.math cimport exp, sqrt, M_PI, pow, sin, cos
 
 np.import_array()
 
 ctypedef np.npy_float64 float64_t
+ctypedef np.npy_complex128 complex128_t
 #ctypedef np.npy_float128 float128_t
 
 cdef float64_t S2PI = sqrt(2.0*M_PI)
@@ -34,6 +35,26 @@ cdef object vectorize(object z,
         if out is None:
             out = np.PyArray_EMPTY(zz.ndim, zz.shape, np.NPY_FLOAT64, False)
         _vectorize(<object>zz, out, fct)
+        return out
+    else:
+        return fct(<float64_t>zz)
+
+cdef void _vectorize_cplx(object z,
+                          object out,
+                          complex128_t (*fct)(float64_t v)):
+    cdef np.broadcast it = np.broadcast(z, out)
+    while np.PyArray_MultiIter_NOTDONE(it):
+        (<complex128_t*> np.PyArray_MultiIter_DATA(it, 1))[0] = fct((<float64_t*> np.PyArray_MultiIter_DATA(it, 0))[0])
+        np.PyArray_MultiIter_NEXT(it)
+
+cdef object vectorize_cplx(object z,
+                           object out,
+                           complex128_t (*fct)(float64_t v)):
+    cdef np.ndarray zz = np.asfarray(z)
+    if zz.ndim > 0:
+        if out is None:
+            out = np.PyArray_EMPTY(zz.ndim, zz.shape, np.NPY_COMPLEX128, False)
+        _vectorize_cplx(<object>zz, out, fct)
         return out
     else:
         return fct(<float64_t>zz)
@@ -174,6 +195,30 @@ cdef float64_t _epanechnikov_pm2(float64_t z):
 
 def epanechnikov_pm2(object z, object out = None):
     return vectorize(z, out, _epanechnikov_pm2)
+
+cdef float64_t _epanechnikov_fft(float64_t z):
+    z /= epanechnikov_a
+    if z == 0:
+        return 1
+    cdef float64_t z3 = z*z*z
+    return 3/z3 * (sin(z) - z*(cos(z)))
+
+def epanechnikov_fft(object z, object out = None):
+    return vectorize(z, out, _epanechnikov_fft)
+
+cdef complex128_t _epanechnikov_fft_xfx(float64_t z):
+    z /= epanechnikov_a
+    if z == 0:
+        return complex128_t(0, 0)
+    cdef:
+        float64_t sin_z = sin(z)
+        float64_t cos_z = cos(z)
+        float64_t z2 = z*z
+        float64_t z4 = z2*z2
+    return complex128_t(0, 3/(epanechnikov_a*z4)*(3*z*cos_z - 3*sin_z + z2*sin_z))
+
+def epanechnikov_fft_xfx(object z, object out = None):
+    return vectorize_cplx(z, out, _epanechnikov_fft_xfx)
 
 cdef float64_t _epanechnikov_o4_pdf(float64_t z):
     if z < -1:

@@ -11,7 +11,7 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .kde_utils import make_ufunc
+from .kde_utils import make_ufunc, numpy_method_idx
 from . import _kernels as kernels_imp
 
 S2PI = np.sqrt(2 * np.pi)
@@ -74,8 +74,12 @@ class Kernel1D(object):
     lower = -np.inf
     upper = np.inf
 
-    def __init__(self, ndim=1):
+    def for_ndim(self, ndim):
+        """
+        Create the same kernel but for a different number of dimensions
+        """
         assert ndim == 1, "Error, this kernel only works in 1D"
+        return self
 
     def pdf(self, z, out=None):
         r"""
@@ -183,11 +187,27 @@ class Kernel1D(object):
         provided as a regular grid spanning the frequencies wanted.
         """
         period = np.pi / (z[1] - z[0])
-        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, 
-                retstep=True)
+        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, retstep=True)
         dz = np.roll(dz, len(z))
         pdf = self.pdf(dz)
         pdf *= step
+        if out is None:
+            out = np.empty(z.shape, dtype=complex)
+        out[:] = np.fft.rfft(pdf)
+        return out
+
+    def fft_xfx(self, z, out=None):
+        """
+        FFT of the function :math:`x k(x)`. The points are given as for the fft function.
+        """
+        period = np.pi / (z[1] - z[0])
+        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, retstep=True)
+        dz = np.roll(dz, len(z))
+        pdf = self.pdf(dz)
+        pdf *= dz
+        pdf *= step
+        if out is None:
+            out = np.empty(z.shape, dtype=complex)
         out[:] = np.fft.rfft(pdf)
         return out
 
@@ -208,6 +228,11 @@ class normal_kernel1d(Kernel1D):
     """
     1D normal density kernel with extra integrals for 1D bounded kernel estimation.
     """
+
+    def for_ndim(self, ndim):
+        if ndim == 1:
+            return self
+        return normal_kernel(ndim)
 
     def pdf(self, z, out=None):
         r"""
@@ -245,6 +270,24 @@ class normal_kernel1d(Kernel1D):
         out = np.multiply(z, z, out)
         out *= -0.5
         np.exp(out, out)
+        return out
+
+    def fft_xfx(self, z, out=None):
+        r"""
+        The FFT of :math:`x\mathcal{N}(x)` which is:
+
+        .. math::
+
+            \text{FFT}(x \mathcal{N}(x)) = -e^{-\frac{\omega^2}{2}}\omega i
+        """
+        z = np.asfarray(z)
+        if out is None:
+            out = np.empty(z.shape, dtype=complex)
+        np.multiply(z, z, out)
+        out *= -0.5
+        np.exp(out, out)
+        out *= -z
+        out *= 1j
         return out
 
     def dct(self, z, out=None):
@@ -343,15 +386,15 @@ class normal_kernel(object):
     identity and average 0 in dimension ``dim``.
     """
 
-    def __new__(klass, dim):
+    def for_ndim(self, ndim):
         """
-        The __new__ method will automatically select :py:class:`normal_kernel1d` if dim is 1.
+        Create the same kernel but for a different number of dimensions
         """
-        if dim == 1:
+        if ndim == 1:
             return normal_kernel1d()
-        return object.__new__(klass, dim)
+        return normal_kernel(ndim)
 
-    def __init__(self, dim):
+    def __init__(self, dim=2):
         self.factor = 1 / np.sqrt(2 * np.pi) ** dim
 
     def pdf(self, xs):
@@ -520,6 +563,31 @@ class Epanechnikov(Kernel1D):
         """
         return kernels_imp.epanechnikov_pm2(xs, out)
 
+    def fft(self, z, out=None):
+        r"""
+        FFT of the Epanechnikov kernel:
+
+        .. math::
+
+            \text{FFT}(w) = \frac{3}{w'^3}\left( \sin w' - w' \cos w' \right)
+
+        where :math:`w' = w\sqrt{5}`
+        """
+        return kernels_imp.epanechnikov_fft(z, out)
+
+    def fft_xfx(self, z, out=None):
+        r"""
+        .. math::
+
+            \text{FFT}(w E(w)) = \frac{3\sqrt{5}i}{w'^4}\left( 3 w' \cos w' - 3 \sin w' + w'^2 \sin w' \right)
+
+        where :math:`w' = w\sqrt{5}`
+        """
+        return kernels_imp.epanechnikov_fft_xfx(z, out)
+
+
+    def dct(self, z, out=None):
+        return kernels_imp.epanechnikov_fft(z, out)
 
 class Epanechnikov_order4(Kernel1D):
     r"""
