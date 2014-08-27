@@ -1,8 +1,7 @@
 r"""
 :Author: Pierre Barbier de Reuille <pierre.barbierdereuille@gmail.com>
 
-This module contains a set of methods to compute univariate KDEs. See the 
-objects in the :py:mod:`pyqt_fit.kde` module for more details on these methods.
+This module contains a set of methods to compute univariate KDEs.
 
 These methods provide various variations on :math:`\hat{K}(x;X,h,L,U)`, the 
 modified kernel evaluated on the point :math:`x` based on the estimation points 
@@ -60,8 +59,7 @@ def generate_grid(kde, N=None, cut=None):
     -------
     A vector of N regularly spaced points
     """
-    if N is None:
-        N = 2 ** 10
+    N = kde.grid_size(N)
     if cut is None:
         cut = kde.kernel.cut
     if kde.lower == -np.inf:
@@ -74,7 +72,7 @@ def generate_grid(kde, N=None, cut=None):
         upper = kde.upper
     return np.linspace(lower, upper, N)
 
-def compute_bandwidth1d(kde):
+def compute_bandwidth(kde):
     """
     Compute the bandwidth and covariance for the estimated model, based of its 
     exog attribute
@@ -104,7 +102,6 @@ class KDE1DMethod(object):
           used with the same arguments.
         - It is fair to assume all array-like arguments will be at least 1D 
           arrays.
-
     """
 
     name = 'unbounded'
@@ -143,10 +140,10 @@ class KDE1DMethod(object):
         is not allowed to change the number of exogenous variables or the 
         dimension of the problem.
         """
-        assert kde.ndims == 1, "Error, this is a 1D method, expecting a 1D problem"
+        assert kde.ndim == 1, "Error, this is a 1D method, expecting a 1D problem"
         fitted = self.copy()
         if compute_bandwidth:
-            bw, cov = compute_bandwidth1d(kde)
+            bw, cov = compute_bandwidth(kde)
             fitted._bw = bw
             fitted._cov = cov
         fitted._exog = kde.exog.reshape((kde.npts,))
@@ -171,7 +168,7 @@ class KDE1DMethod(object):
             self._adjust = np.asarray(float(val))
         except TypeError:
             val = np.atleast_1d(val).astype(float)
-            assert len(val.shape) == 1 and val.shape[0] == self.ndims, \
+            assert val.shape == (self.npts,), \
                     "Adjust must be a single values or a 1D array with value per input point"
             self._adjust = val
 
@@ -180,7 +177,7 @@ class KDE1DMethod(object):
         self._adjust = np.asarray(1.)
 
     @property
-    def ndims(self):
+    def ndim(self):
         """
         Dimension of the problem
         """
@@ -1539,7 +1536,7 @@ class TransformKDE(KDE1DMethod):
     # List of attributes to forward to the method object
     _fwd_attrs = [ 'weights', 'adjust', 'kernel'
                  , 'bandwidth', 'covariance'
-                 , 'total_weights', 'ndims', 'npts' ]
+                 , 'total_weights', 'ndim', 'npts' ]
 
     def fit(self, kde):
         """
@@ -1559,7 +1556,7 @@ class TransformKDE(KDE1DMethod):
 
         copy_attrs = [ 'weights', 'adjust', 'kernel'
                      , 'bandwidth', 'covariance'
-                     , 'total_weights', 'ndims', 'npts' ]
+                     , 'total_weights', 'ndim', 'npts' ]
 
         for attr in copy_attrs:
             setattr(trans_kde, attr, getattr(kde, attr))

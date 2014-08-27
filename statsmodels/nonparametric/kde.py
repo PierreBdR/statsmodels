@@ -99,7 +99,7 @@ class KDE(object):
         self.exog = exog
 
         if self._bw is None and self._covariance is None:
-            self.covariance = bandwidths.scotts_covariance
+            self.bandwidth = bandwidths.scotts_bandwidth
 
         if self._method is None:
             self.method = default_method
@@ -122,7 +122,7 @@ class KDE(object):
     @exog.setter
     def exog(self, xs):
         self._exog = np.atleast_2d(xs)
-        assert len(self._exog.shape) == 2, "The attribute 'exog' must be a one-dimension array"
+        assert self._exog.ndim == 2, "The attribute 'exog' must be a one-dimension array"
 
     @property
     def kernel(self):
@@ -145,7 +145,7 @@ class KDE(object):
         Lower bound of the density domain. If None, this is :math:`-\infty` on all dimension.
         """
         if self._lower is None:
-            return -np.inf*np.ones((self.ndims,), dtype=float)
+            return -np.inf*np.ones((self.ndim,), dtype=float)
         return self._lower
 
     @lower.setter
@@ -163,7 +163,7 @@ class KDE(object):
         :math:`\infty`
         """
         if self._upper is None:
-            return np.inf*np.ones((self.ndims,), dtype=float)
+            return np.inf*np.ones((self.ndim,), dtype=float)
         return self._upper
 
     @upper.setter
@@ -267,7 +267,7 @@ class KDE(object):
         self._bw = None
 
     @property
-    def ndims(self):
+    def ndim(self):
         """
         Return the number of dimensions of the problem
         """

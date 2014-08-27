@@ -85,7 +85,7 @@ def numpy_trans_idx(fct):
     def f(z, out=None):
         z = np.asanyarray(z)
         real_shape = z.shape
-        if len(real_shape) == 0:
+        if z.ndim == 0:
             z = z.reshape(1)
         if out is None:
             out = np.empty(z.shape, dtype=type(z.dtype.type() + 0.))
@@ -116,7 +116,7 @@ def numpy_method_idx(fct):
     def f(self, z, out=None):
         z = np.asanyarray(z)
         real_shape = z.shape
-        if len(real_shape) == 0:
+        if z.ndim == 0:
             z = z.reshape(1)
         if out is None:
             out = np.empty(z.shape, dtype=type(z.dtype.type() + 0.))

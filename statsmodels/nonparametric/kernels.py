@@ -385,6 +385,7 @@ class normal_kernel(object):
     Returns a function-object for the PDF of a Normal kernel of variance
     identity and average 0 in dimension ``dim``.
     """
+    cut = 3
 
     def for_ndim(self, ndim):
         """
