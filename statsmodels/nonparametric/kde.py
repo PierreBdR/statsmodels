@@ -84,7 +84,7 @@ class KDE(object):
         self._exog = None
         self._upper = None
         self._lower = None
-        self._kernel = kernels.normal_kernel
+        self._kernel = kernels.normal_kernel()
 
         self._bw = None
         self._covariance = None
