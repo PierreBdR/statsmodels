@@ -1,10 +1,11 @@
 from __future__ import division, absolute_import, print_function
 import numpy as np
-from scipy import fftpack, optimize
+from scipy import fftpack, optimize, linalg
 from .kde_utils import large_float, finite
 from statsmodels.compat.python import range
+from scipy.stats import scoreatpercentile as sap
 
-def _select_sigma(X):
+def _spread(X):
     """
     Returns the smaller of std(X, ddof=1) or normalized IQR(X) over axis 0.
 
@@ -12,30 +13,33 @@ def _select_sigma(X):
     ----------
     Silverman (1986) p.47
     """
-#    normalize = norm.ppf(.75) - norm.ppf(.25)
-    normalize = 1.349
-#    IQR = np.subtract.reduce(percentile(X, [75,25],
-#                             axis=axis), axis=axis)/normalize
-    IQR = (sap(X, 75) - sap(X, 25))/normalize
-    return np.minimum(np.std(X, axis=0, ddof=1), IQR)
-
+    IQR = (sap(X, 75, axis=1) - sap(X, 25, axis=1))/1.349
+    return np.minimum(np.std(X, axis=1, ddof=1), IQR)
 
 def variance_bandwidth(factor, exog):
     r"""
-    Returns the covariance matrix:
+    Returns the bandwidth matrix:
 
     .. math::
 
-        \mathcal{C} = \tau^2 cov(X)
+        \mathcal{C} = \tau cov(X)^{1/2}
 
     where :math:`\tau` is a correcting factor that depends on the method.
     """
-    data_covariance = np.atleast_2d(np.cov(exog, rowvar=1, bias=False))
-    sq_bandwidth = data_covariance * factor * factor
-    return sq_bandwidth
+    n = exog.shape[0]
+    if n == 1:
+        spread = _spread1d(exog)
+    else:
+        spread = np.atleast_2d(linalg.sqrtm(np.cov(exog, rowvar=1, bias=False)))
+    return spread * factor
 
+def diagonal_bandwidth(factor, exog):
+    r"""
+    Return the diagonal covariance matrix according to Silverman's rule
+    """
+    return _spread(exog) * factor
 
-def silverman_covariance(model):
+def silverman_bandwidth(model):
     r"""
     The Silverman bandwidth is defined as a variance bandwidth with factor:
 
@@ -45,10 +49,10 @@ def silverman_covariance(model):
     """
     exog = np.atleast_2d(model.exog)
     d, n = exog.shape
-    return variance_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
+    return diagonal_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
 
 
-def scotts_covariance(model=None):
+def scotts_bandwidth(model=None):
     r"""
     The Scotts bandwidth is defined as a variance bandwidth with factor:
 
@@ -58,7 +62,7 @@ def scotts_covariance(model=None):
     """
     exog = np.atleast_2d(model.exog)
     d, n = exog.shape
-    return variance_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
+    return diagonal_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
 
 
 def _botev_fixed_point(t, M, I, a2):
@@ -132,4 +136,22 @@ class botev_bandwidth(object):
             t_star = .28 * N ** (-.4)
 
         return np.sqrt(t_star) * span
+
+class CV_LeastSquare(object):
+    """
+    Implement the Cross-Validation Least Square bandwidth estimation method.
+
+    Notes
+    -----
+    For more details see pp. 16, 27 in Ref. [1] (see module docstring).
+
+    Returns the value of the bandwidth that maximizes the integrated mean
+    square error between the estimated and actual distribution.  The
+    integrated mean square error (IMSE) is given by:
+
+    .. math:: \int\left[\hat{f}(x)-f(x)\right]^{2}dx
+
+    This is the general formula for the IMSE.
+    """
+    pass
 
