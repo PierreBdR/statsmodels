@@ -75,7 +75,8 @@ def generate_grid(kde, N=None, cut=None):
 
 def compute_bandwidth1d(kde):
     """
-    Compute the bandwidth and covariance for the model, based of its exog attribute
+    Compute the bandwidth and covariance for the estimated model, based of its 
+    exog attribute
     """
     if kde.bandwidth is not None:
         if callable(kde.bandwidth):
@@ -120,8 +121,8 @@ class KDE1DMethod(object):
 
     def fit(self, kde, compute_bandwidth=True):
         """
-        Method called by the KDE object right after fitting to allow for 
-        one-time calculation.
+        Extract the parameters required for the computation and returns 
+        a stand-alone estimator capable of performing most computations.
 
         Parameters
         ----------
@@ -132,8 +133,14 @@ class KDE1DMethod(object):
 
         Returns
         -------
-        A copy of self with all the relevant values copied from the ``kde`` 
-        object.
+        An estimator object that doesn't depend on the KDE object.
+
+
+        Notes
+        -----
+        By default, most values can be adjusted after estimation. However, it 
+        is not allowed to change the number of exogenous variables or the 
+        dimension of the problem.
         """
         assert kde.ndims == 1, "Error, this is a 1D method, expecting a 1D problem"
         fitted = self.copy()
@@ -190,14 +197,17 @@ class KDE1DMethod(object):
     @property
     def bandwidth(self):
         """
-        Selected bandwidth
+        Selected bandwidth.
+
+        Unlike the bandwidth for the KDE, this must be an actual value and not 
+        a method.
         """
         return self._bw
 
     @bandwidth.setter
     def bandwidth(self, val):
         val = float(val)
-        assert val > 0, "THe bandwidth must be strictly positive"
+        assert val > 0, "The bandwidth must be strictly positive"
         self._bw = val
         self._cov = val*val
 
@@ -205,6 +215,9 @@ class KDE1DMethod(object):
     def covariance(self):
         """
         Square of the selected bandwidth
+
+        Unlike the covariance for the KDE, this must be an actual value and not 
+        a method.
         """
         return self._cov
 
@@ -218,9 +231,19 @@ class KDE1DMethod(object):
     @property
     def exog(self):
         """
-        Input points
+        Input points.
+
+        Notes
+        -----
+        At that point, you are not allowed to change the number of exogenous 
+        points.
         """
         return self._exog
+
+    @exog.setter
+    def exog(self, value):
+        value = np.atleast_1d(value).reshape(self._exog.shape)
+        self._exog = value
 
     @property
     def lower(self):
@@ -229,12 +252,22 @@ class KDE1DMethod(object):
         """
         return self._lower
 
+    @lower.setter
+    def lower(self, val):
+        val = float(val)
+        self._lower = val
+
     @property
     def upper(self):
         """
         Upper bound of the problem domain
         """
         return self._upper
+
+    @upper.setter
+    def upper(self, val):
+        val = float(val)
+        self._upper = val
 
     @property
     def kernel(self):
@@ -254,19 +287,19 @@ class KDE1DMethod(object):
         """
         return self._weights
 
+    @weights.setter
+    def weights(self, val):
+        val = np.asarray(val)
+        if val.shape:
+            val = val.reshape(self._exog.shape)
+            self._weights = val
+
     @property
     def total_weights(self):
         """
         Sum of the point weights
         """
         return self._total_weights
-
-    @property
-    def method(self):
-        """
-        Method in use for this Fitted univariate KDE
-        """
-        return self
 
     @property
     def closed(self):
@@ -1290,18 +1323,77 @@ class TransformKDE(KDE1DMethod):
         parameter may be one of the input argument.
     """
     def __init__(self, trans, method=None, inv=None, Dinv=None):
+        super(TransformKDE, self).__init__()
         self.trans = create_transform(trans, inv, Dinv)
         if method is None:
             method = Reflection()
-        self.method = method
+        self._method = method
+        self._fitted = False
+        self._clean_attrs()
+
+    _to_clean = [ '_bw', '_cov', '_adjust'
+                , '_weights', '_kernel', '_total_weights' ]
+    def _clean_attrs(self):
+        """
+        Remove attributes not needed for this class
+        """
+        for attr in TransformKDE._to_clean:
+            if hasattr(self, attr):
+                delattr(self, attr)
 
     @property
     def method(self):
+        """
+        Method used in the transformed space.
+
+        Notes
+        -----
+        The method can only be changed before fitting!
+        """
         return self._method
 
     @method.setter
     def method(self, m):
+        if self._fitted:
+            raise ValueError("You cannot change the method of a fitted TransformKDE")
         self._method = m
+
+    @property
+    def exog(self):
+        return self._exog
+
+    @exog.setter
+    def exog(self, val):
+        val = np.atleast_1d(val).reshape(self._exog.shape)
+        self.method.exog = self.trans(val)
+        self._exog = val
+
+    @property
+    def lower(self):
+        return self._lower
+
+    @lower.setter
+    def lower(self, val):
+        val = float(val)
+        trans_val = self.trans(val)
+        self.method.lower = trans_val
+        self._lower = val
+
+    @property
+    def upper(self):
+        return self._upper
+
+    @upper.setter
+    def upper(self, val):
+        val = float(val)
+        trans_val = self.trans(val)
+        self.method.upper = trans_val
+        self._upper = val
+
+    # List of attributes to forward to the method object
+    _fwd_attrs = [ 'weights', 'adjust', 'kernel'
+                 , 'bandwidth', 'covariance'
+                 , 'total_weights', 'ndims', 'npts' ]
 
     def fit(self, kde):
         """
@@ -1313,6 +1405,7 @@ class TransformKDE(KDE1DMethod):
         :param pyqt_fit.self.KDE kde: KDE object being fitted
         """
         fitted = super(TransformKDE, self).fit(kde, False)
+        fitted._clean_attrs()
         trans_kde = _transKDE(self)
         trans_kde.lower = self.trans(fitted.lower)
         trans_kde.upper = self.trans(fitted.upper)
@@ -1326,11 +1419,8 @@ class TransformKDE(KDE1DMethod):
             setattr(trans_kde, attr, getattr(kde, attr))
 
         trans_method = self.method.fit(trans_kde)
-
-        # Compute the bandwidth for the fake KDE and update the KDE itself
-        fitted.bandwidth = trans_method.bandwidth
-        fitted.covariance = trans_method.covariance
         fitted.method = trans_method
+        fitted._fitted = True
 
         return fitted
 
@@ -1384,4 +1474,21 @@ class TransformKDE(KDE1DMethod):
         xs, ys = self.method.isf_grid(N, cut)
         self.trans.inv(ys, out=ys)
         return xs, ys
+
+def _add_fwd_attr(cls, to_fwd, attr):
+    try:
+        fwd_obj = getattr(cls, to_fwd)
+        doc = getattr(fwd_obj, '__doc__')
+    except AttributeError:
+        doc = 'Attribute forwarded to {}'.format(to_fwd)
+    def getter(self):
+        return getattr(getattr(self, to_fwd), attr)
+
+    def setter(self):
+        setattr(getattr(self, to_fwd), attr)
+
+    setattr(cls, attr, property(getter, setter, doc=doc))
+
+for attr in TransformKDE._fwd_attrs:
+    _add_fwd_attr(TransformKDE, 'method', attr)
 
