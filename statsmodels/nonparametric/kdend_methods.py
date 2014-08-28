@@ -7,6 +7,7 @@ This module contains a set of methods to compute multivariates KDEs.
 import numpy as np
 from scipy import linalg
 from statsmodels.compat.python import range
+from .kde_utils import numpy_trans_method
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -40,7 +41,6 @@ def generate_grid(kde, N=None, cut=None):
             upper[i] = np.max(kde.exog[i]) + cut[i]
     xi = [ np.linspace(lower[i], upper[i], N) for i in range(ndim) ]
     return np.meshgrid(*xi)
-
 
 def compute_bandwidth(kde):
     """
@@ -355,7 +355,8 @@ class KDEnDMethod(object):
             return all(self.bounded(i) for i in range(self.ndim))
         return self.lower[dim] > -np.inf or self.upper[dim] < np.inf
 
-    def pdf(self, points, out=None):
+    @numpy_trans_method(2, 1)
+    def pdf(self, points, out):
         """
         Compute the PDF of the estimated distribution.
 
@@ -376,7 +377,8 @@ class KDEnDMethod(object):
         points = np.atleast_2d(points)
         exog = self.exog
 
-        d, m = points.shape
+        d = points.shape[0]
+        m = points.shape[1:]
         assert d == self.ndim
 
         kernel = self.kernel
@@ -415,4 +417,10 @@ class KDEnDMethod(object):
         """
         return self.pdf(points, out)
 
+    def cdf(self, points, out=None):
+        bw = self.bandwidth
+        if bw.ndim < 2: # We have a diagonal matrix
+            pass
+        else:
+            pass
 

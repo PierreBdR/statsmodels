@@ -36,7 +36,7 @@ References:
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
-from .kde_utils import make_ufunc, namedtuple, numpy_trans_idx, numpy_method_idx, finite
+from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D
@@ -313,7 +313,7 @@ class KDE1DMethod(object):
         return self.lower > -np.inf or self.upper < np.inf
 
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         """
         Compute the PDF of the estimated distribution.
@@ -356,7 +356,7 @@ class KDE1DMethod(object):
         """
         return self.pdf(points, out)
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def cdf(self, points, out):
         r"""
         Compute the CDF of the estimated distribution, defined as:
@@ -398,7 +398,7 @@ class KDE1DMethod(object):
 
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def icdf(self, points, out):
         r"""
         Compute the inverse cumulative distribution (quantile) function, 
@@ -447,7 +447,7 @@ class KDE1DMethod(object):
 
         return find_inverse(points, coarse_result, out=out)
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def sf(self, points, out):
         r"""
         Compute the survival function, defined as:
@@ -467,7 +467,7 @@ class KDE1DMethod(object):
         out *= -1
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def isf(self, points, out):
         r"""
         Compute the inverse survival function, defined as:
@@ -484,7 +484,7 @@ class KDE1DMethod(object):
         """
         return self.icdf(1-points, out)
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def hazard(self, points, out):
         r"""
         Compute the hazard function evaluated on the points.
@@ -511,7 +511,7 @@ class KDE1DMethod(object):
         out /= sf
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def cumhazard(self, points, out):
         r"""
         Compute the cumulative hazard function evaluated on the points.
@@ -686,7 +686,7 @@ class KDE1DMethod(object):
         """
         return self.name
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def numeric_cdf(self, points, out):
         """
         Provide a numeric approximation of the CDF based on integrating the pdf 
@@ -802,7 +802,7 @@ class Cyclic(KDE1DMethod):
 
     name = 'cyclic'
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -839,7 +839,7 @@ class Cyclic(KDE1DMethod):
 
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def cdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.cdf(self, points, out)
@@ -998,7 +998,7 @@ class Reflection(KDE1DMethod):
 
     name = 'reflection'
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -1037,7 +1037,7 @@ class Reflection(KDE1DMethod):
 
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def cdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.cdf(self, points, out)
@@ -1141,7 +1141,7 @@ class Renormalization(Unbounded):
 
     name = 'renormalization'
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         if not self.bounded:
             return Cyclic.pdf(self, points, out)
@@ -1166,7 +1166,7 @@ class Renormalization(Unbounded):
 
         return out
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def cdf(self, points, out):
         if not self.bounded:
             return super(Renormalization, self).cdf(points, out)
@@ -1247,7 +1247,7 @@ class LinearCombination(Unbounded):
 
     name = 'linear combination'
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         if not self.bounded:
             return KDE1DMethod.pdf(self, points, out)
@@ -1409,7 +1409,7 @@ def create_transform(obj, inv=None, Dinv=None):
         if hasattr(obj, 'Dinv'):
             Dinv = obj.Dinv
         else:
-            @numpy_trans_idx
+            @numpy_trans1d
             def Dinv(x):
                 dx = x * 1e-9
                 dx[x == 0] = np.min(dx[x != 0])
@@ -1567,7 +1567,7 @@ class TransformKDE(KDE1DMethod):
 
         return fitted
 
-    @numpy_method_idx
+    @numpy_trans1d_method
     def pdf(self, points, out):
         trans = self.trans
         pts = trans(points)

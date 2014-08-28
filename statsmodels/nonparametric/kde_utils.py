@@ -24,6 +24,22 @@ else:
 def finite(val):
     return val is not None and np.isfinite(val)
 
+def atleast_2df(*arys):
+    """
+    Return at least a 2D array, fortran style (e.g. adding dimensions at the end)
+    """
+    res = []
+    for ary in arys:
+        ary = np.asanyarray(ary)
+        if ary.ndim == 0:
+            ary = ary.reshape(1,1)
+        elif ary.ndim == 1:
+            ary = ary[:,np.newaxis]
+        res.append(ary)
+    if len(res) == 1:
+        return res[0]
+    return res
+
 def make_ufunc(nin = None, nout=1):
     """
     Decorator used to create a ufunc using `np.frompyfunc`. Note that the 
@@ -42,90 +58,114 @@ def make_ufunc(nin = None, nout=1):
         return np.frompyfunc(fct, Nin, nout)
     return f
 
-def numpy_trans(fct):
-    """
-    Decorator to create a function taking a single array-like argument and 
-    return a numpy array of same shape.
-
-    The function is called as:
-
-        fct(z, out=out)
-
-    This decorator garanties that z and out are ndarray of same shape and out is 
-    at least a float.
-    """
-    def f(z, out=None):
-        z = np.asanyarray(z)
-        if out is None:
-            out = np.empty(z.shape, dtype=type(z.dtype.type() + 0.))
-            arg_out = out
-        else:
-            arg_out = out.reshape(z.shape)
-        fct(z, out=arg_out)
-        return out
-    return f
-
-def numpy_trans_idx(fct):
-    """
-    Decorator to create a function taking a single array-like argument and 
-    return a numpy array of same shape. In addition, if the input as no 
-    dimension, the function will still receive a 1D array, allowing for 
-    indexing.
-
-    The function is called as:
-
-        fct(z, out=out)
-
-    This decorator garanties that z and out are at least 1D ndarray of same 
-    shape and out is at least a float.
-
-    It also ensure the output is the shape of the initial input (even if it has 
-    no dimension)
-    """
-    def f(z, out=None):
-        z = np.asanyarray(z)
-        real_shape = z.shape
-        if z.ndim == 0:
+def _process_trans_args(z, out, input_dim, output_dim):
+    z = np.asarray(z)
+    input_shape = z.shape
+    need_transpose = False
+    # Compute data shape (i.e. input without the dimension)
+    z_empty = False
+    if z.ndim == 0:
+        z_empty = True
+        data_shape = (1,)
+        if input_dim == 0:
             z = z.reshape(1)
-        if out is None:
-            out = np.empty(z.shape, dtype=type(z.dtype.type() + 0.))
         else:
-            out.shape = z.shape
-        out = fct(z, out=out)
-        out.shape = real_shape
-        return out
-    return f
-
-def numpy_method_idx(fct):
-    """
-    Decorator to create a function taking a single array-like argument and 
-    return a numpy array of same shape. In addition, if the input as no 
-    dimension, the function will still receive a 1D array, allowing for 
-    indexing.
-
-    The function is called as:
-
-        fct(self, z, out=out)
-
-    This decorator garanties that z and out are at least 1D ndarray of same 
-    shape and out is at least a float.
-
-    It also ensure the output is the shape of the initial input (even if it has 
-    no dimension)
-    """
-    def f(self, z, out=None):
-        z = np.asanyarray(z)
-        real_shape = z.shape
-        if z.ndim == 0:
-            z = z.reshape(1)
-        if out is None:
-            out = np.empty(z.shape, dtype=type(z.dtype.type() + 0.))
+            z = z.reshape(1,1)
+    elif input_dim == 0:
+        data_shape = input_shape
+    elif input_dim < 0:
+        data_shape = input_shape[:-1]
+    else:
+        if input_shape[-1] == input_dim:
+            data_shape = input_shape[:-1]
+        elif input_shape[0] == input_dim:
+            data_shape = input_shape[1:]
+            need_transpose = True
         else:
-            out.shape = z.shape
-        out = fct(self, z, out=out)
-        out.shape = real_shape
-        return out
-    return f
+            raise ValueError("Error, the input array is of dimension {0} "
+                             "(expected: {1})".format(input_shape[-1], input_dim))
+    # Allocate the output
+    if out is None:
+        # Compute the output shape
+        if output_dim > 1:
+            if need_transpose:
+                output_shape = (output_dim,) + data_shape
+            else:
+                output_shape = data_shape + (output_dim,)
+        else:
+            output_shape = data_shape
+        out = write_out = np.empty(output_shape, dtype=type(z.dtype.type() + 0.))
+        if z_empty and output_dim == 1:
+            out = write_out.reshape(())
+    else:
+        write_out = out
+    # Transpose if needed
+    if need_transpose:
+        write_out = write_out.T
+        z = z.T
+    return z, write_out, out
+
+def numpy_trans(input_dim, output_dim):
+    """
+    Decorator to create a function taking a single array-like argument and return a numpy array with the same number of 
+    points.
+
+    The function will always get an input and output with the last index corresponding to the dimension of the problem.
+
+    Parameters
+    ----------
+    input_dim: int
+        Number of dimensions of the input. The behavior depends on the value:
+            < 0 : The last index is the dimension, but it is of variable size.
+            = 0 : This is an invalid value.
+            > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
+                  on the first, the arrays are transposed before being sent to the function.
+    output_dim: int
+        Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or 
+        less.
+    """
+    if output_dim <= 0:
+        raise ValueError("Error, the number of output dimension must be strictly more than 0.")
+    def decorator(fct):
+        def f(z, out=None):
+            z, write_out, out = _process_trans_args(z, out, input_dim, output_dim)
+            fct(z, out=write_out)
+            return out
+        return f
+    return decorator
+
+numpy_trans1d = numpy_trans(0, 1)
+
+def numpy_trans_method(input_dim, output_dim):
+    """
+    Decorator to create a method taking a single array-like argument and return a numpy array with the same number of 
+    points.
+
+    The function will always get an input and output with the last index corresponding to the dimension of the problem.
+
+    Parameters
+    ----------
+    input_dim: int
+        Number of dimensions of the input. The behavior depends on the value:
+            < 0 : The last index is the dimension, but it is of variable size.
+            = 0 : There is no index for the dimension (e.g. 1D)
+            > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
+                  on the first, the arrays are transposed before being sent to the function.
+    output_dim: int
+        Dimension of the output. If more than 1, the last index of the output array is the dimension. If cannot be 0 or 
+        less.
+    """
+    if output_dim <= 0:
+        raise ValueError("Error, the number of output dimension must be strictly more than 0.")
+    def decorator(fct):
+        def f(self, z, out=None):
+            z, write_out, out = process_args(z, out, input_dim, output_dim)
+            out = fct(self, z, out=write_out)
+            return out
+        return f
+    return decorator
+
+numpy_trans1d_method = numpy_trans(0, 1)
 
 def namedtuple(typename, field_names, verbose=False, rename=False):
     """Returns a new subclass of tuple with named fields.
