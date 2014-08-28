@@ -108,21 +108,21 @@ class Kernel1D(object):
         """
         z = np.asfarray(z)
         try:
-            comp_pdf = self.__comp_pdf
+            comp_cdf = self.__comp_cdf
         except AttributeError:
             lower = self.lower
             upper = self.upper
             @make_ufunc()
-            def comp_pdf(x):
+            def comp_cdf(x):
                 if x <= lower:
                     return 0
                 if x >= upper:
                     x = upper
                 return integrate.quad(self.pdf, lower, x)[0]
-            self.__comp_cdf = comp_pdf
+            self.__comp_cdf = comp_cdf
         if out is None:
             out = np.empty(z.shape, dtype=float)
-        return comp_pdf(z, out=out)
+        return comp_cdf(z, out=out)
 
     def pm1(self, z, out=None):
         r"""
@@ -407,13 +407,11 @@ class KernelnD(object):
         Parameters
         ----------
         z: ndarray
-            Array of points to evaluate the function on. This should be at 
-            least a 2D array, with the first dimension corresponding to the 
-            dimension of the problem.
+            Array of points to evaluate the function on. This should be at least a 2D array, with the last dimension 
+            corresponding to the dimension of the problem.
         out: ndarray
-            If provided, it will be of the same shape as `z` and the result 
-            should be stored in it. Ideally, it should be used for as many 
-            intermediate computation as possible.
+            If provided, it will be of the same shape as `z` and the result should be stored in it. Ideally, it should 
+            be used for as many intermediate computation as possible.
         """
         raise NotImplementedError()
 
@@ -426,38 +424,23 @@ class KernelnD(object):
     def cdf(self, z, out=None):
         z = np.asfarray(z)
         try:
-            comp_pdf = self.__comp_pdf
+            comp_cdf = self.__comp_cdf
         except AttributeError:
             def pdf(*xs):
                 return self.pdf(xs)
             lower = self.lower
             upper = self.upper
             ndim = self.ndim
-            if ndim == 2:
-                @make_ufunc()
-                def comp_pdf2d(x, y):
-                    if x <= lower or y <= lower:
-                        return 0
-                    if x > upper:
-                        x = upper
-                    if y > upper:
-                        y = upper
-                    return integrate.dblquad(pdf, lower, y,
-                                             lambda y:lower, lambda y: x)[0]
-                comp_pdf = comp_pdf2d
-                self.__comp_pdf = comp_pdf2d
-            else:
-                @make_ufunc(ndim)
-                def comp_pdfnd(*xs):
-                    if np.any(xs <= lower):
-                        return 0
-                    xs = np.minimum(xs, upper)
-                    return integrate.nquad(pdf, [(lower, x) for x in xs])[0]
-                comp_pdf = comp_pdfnd
-                self.__comp_pdf = comp_pdfnd
+            @make_ufunc(ndim)
+            def comp_cdf(*xs):
+                if any(x <= lower for x in xs):
+                    return 0
+                xs = np.minimum(xs, upper)
+                return integrate.nquad(pdf, [(lower, x) for x in xs])[0]
+            self.__comp_cdf = comp_cdf
         if out is None:
             out = np.empty(z.shape[1:], dtype=float)
-        return comp_pdf(*z, out=out)
+        return comp_cdf(*z, out=out)
 
 class normal_kernel(KernelnD):
     """
