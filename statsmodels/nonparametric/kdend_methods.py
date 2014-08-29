@@ -117,8 +117,8 @@ class KDEnDMethod(object):
         dimension of the problem.
         """
         ndim = kde.ndim
-        if ndim == 1 and type(self) == KernelnD:
-            method = kde1d_methods.Cyclic()
+        if ndim == 1 and type(self) == KDEnDMethod:
+            method = kde1d_methods.Reflection()
             return method.fit(kde, compute_bandwidth)
         npts = kde.npts
         fitted = self.copy()
