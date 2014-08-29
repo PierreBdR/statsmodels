@@ -11,7 +11,7 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .kde_utils import make_ufunc, numpy_trans_method, numpy_trans1d_method
+from .kde_utils import make_ufunc, numpy_trans_method, numpy_trans1d_method, finite
 from . import _kernels
 from copy import copy as shallowcopy
 
@@ -178,11 +178,13 @@ class Kernel1D(object):
 
     def fft(self, z, out=None):
         """
-        FFT of the kernel on the points of ``z``. The points will always be 
-        provided as a regular grid spanning the frequencies wanted.
+        FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
+        frequency range to be explored.
         """
         period = np.pi / (z[1] - z[0])
-        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, retstep=True)
+        l = 2*len(z)-1
+        step = (2*period) / l
+        dz = np.linspace(-period+step/2, period-step/2, l, endpoint=True)
         dz = np.roll(dz, len(z))
         pdf = self.pdf(dz)
         pdf *= step
@@ -196,7 +198,9 @@ class Kernel1D(object):
         FFT of the function :math:`x k(x)`. The points are given as for the fft function.
         """
         period = np.pi / (z[1] - z[0])
-        dz, step = np.linspace(-period, period, 2*len(z)-1, endpoint=False, retstep=True)
+        l = 2*len(z)-1
+        step = (2*period) / l
+        dz = np.linspace(-period+step/2, period-step/2, l, endpoint=True)
         dz = np.roll(dz, len(z))
         pdf = self.pdf(dz)
         pdf *= dz
@@ -208,15 +212,15 @@ class Kernel1D(object):
 
     def dct(self, z, out=None):
         r"""
-        DCT of the kernel on the points of ``z``. The points will always be provided as a grid with :math:`2^n` points, 
-        representing the whole frequency range to be explored.
+        DCT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
+        frequency range to be explored.
         """
-        z = np.asfarray(z)
-        a1 = z[1] - z[0]
-        gp = (z / a1 + 0.5) * np.pi / (len(z) * a1)
-        out = self.pdf(gp, out=out)
-        out *= gp[1] - gp[0]
-        out[:] = fftpack.dct(out, overwrite_x = True)
+        period = np.pi / (z[1] - z[0])
+        dz, step = np.linspace(0, period, len(z), endpoint=False, retstep=True)
+        dz += step/2
+        out = self.pdf(dz, out=out)
+        out *= step
+        out[...] = fftpack.dct(out, overwrite_x = True)
         return out
 
 class normal_kernel1d(Kernel1D):
