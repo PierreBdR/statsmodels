@@ -78,6 +78,7 @@ def _process_trans_args(z, out, input_dim, output_dim, dtype):
         data_shape = input_shape
     elif input_dim < 0:
         data_shape = input_shape[:-1]
+        input_dim = input_shape[-1]
     else:
         if input_shape[-1] == input_dim:
             data_shape = input_shape[:-1]
@@ -101,12 +102,25 @@ def _process_trans_args(z, out, input_dim, output_dim, dtype):
             dtype = z.dtype
             if issubclass(dtype.type, np.integer):
                 dtype = np.float64
-        out = write_out = np.empty(output_shape, dtype=dtype)
+        write_out = out = np.empty(output_shape, dtype=dtype)
         if z_empty and output_dim == 1:
-            out = write_out.reshape(())
+            out = out.reshape(())
     else:
         write_out = out
     # Transpose if needed
+    if input_dim != 0:
+        size_data = np.prod(data_shape)
+        if output_dim > 1:
+            if need_transpose:
+                write_out = write_out.reshape(output_dim, size_data)
+            else:
+                write_out = write_out.reshape(size_data, output_dim)
+        else:
+            write_out = write_out.reshape(size_data)
+        if need_transpose:
+            z = z.reshape(input_dim, size_data)
+        else:
+            z = z.reshape(size_data, input_dim)
     if need_transpose:
         write_out = write_out.T
         z = z.T
@@ -137,6 +151,10 @@ def numpy_trans(input_dim, output_dim, dtype=None):
         untouched.
         If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
+
+    Notes
+    -----
+    If input_dim is not 0, the function will always receive a 2D array with the second index for the dimension.
     """
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
@@ -148,7 +166,17 @@ def numpy_trans(input_dim, output_dim, dtype=None):
         return f
     return decorator
 
-numpy_trans1d = numpy_trans(0, 1)
+def numpy_trans1d(fct):
+    def f(z, out=None):
+        z = np.asarray(z)
+        if out is None:
+            dtype = z.dtype
+            if issubclass(dtype.type, np.integer):
+                dtype = np.float64
+            out = np.empty(z.shape, dtype=dtype)
+        fct(z, out)
+        return out
+
 
 def numpy_trans_method(input_dim, output_dim, dtype=None):
     """
@@ -177,6 +205,10 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
         untouched.
         If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
+
+    Notes
+    -----
+    If input_dim is not 0, the function will always receive a 2D array with the second index for the dimension.
     """
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
@@ -203,7 +235,16 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
         return f
     return decorator
 
-numpy_trans1d_method = numpy_trans_method(0, 1)
+def numpy_trans1d_method(fct):
+    def f(self, z, out=None):
+        z = np.asarray(z)
+        if out is None:
+            dtype = z.dtype
+            if issubclass(dtype.type, np.integer):
+                dtype = np.float64
+            out = np.empty(z.shape, dtype=dtype)
+        fct(z, out)
+        return out
 
 def namedtuple(typename, field_names, verbose=False, rename=False):
     """Returns a new subclass of tuple with named fields.

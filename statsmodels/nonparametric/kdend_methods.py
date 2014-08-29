@@ -380,39 +380,58 @@ class KDEnDMethod(object):
         """
         exog = self.exog
 
-        d = points.shape[-1]
-        pts_shape = points.shape[:-1]
-        m = np.prod(pts_shape)
+        m, d = points.shape
         assert d == self.ndim
 
         kernel = self.kernel
         inv_bw = self.inv_bandwidth
-        if inv_bw.ndim == 1:
-            inv_bw = np.diag(inv_bw)
+        def scalar_inv_bw(pts):
+            return (pts * inv_bw)
+        def matrix_inv_bw(pts):
+            return np.dot(pts, inv_bw)
+        inv_bw_fct = scalar_inv_bw
+        if inv_bw.ndim == 2:
+            inv_bw_fct = matrix_inv_bw
+
+
+        #if inv_bw.ndim == 2:
+            #raise ValueError("Error, this method cannot handle non-diagonal bandwidth matrix.")
         det_inv_bw = self.det_inv_bandwidth
         weights = self.weights
         adjust = self.adjust
 
-        if out is None:
-            out = np.zeros(m, dtype=float)
-        else:
-            out.setfield(0., dtype=float)
-
-        factor = (weights * det_inv_bw) / adjust
         if self.npts > m:
+            factor = weights * det_inv_bw / adjust
             # There are fewer points that data: loop over points
-            for idx in np.ndindex(*points.shape[:-1]):
-                diff = np.dot(exog - points[idx], inv_bw) / adjust
-                energy = kernel(diff)
+            energy = np.empty((exog.shape[0],), dtype=out.dtype)
+            #print("iterate on points")
+            for idx in range(m):
+                diff = inv_bw_fct(points[idx] - exog)
+                kernel.pdf(diff, out=energy)
                 energy *= factor
                 out[idx] = np.sum(energy)
         else:
+            weights = np.atleast_1d(weights)
+            adjust = np.atleast_1d(adjust)
+            out[...] = 0
+
             # There are fewer data that points: loop over data
-            it = np.nditer((exog[...,0], adjust, factor), flags=['multi_index'])
-            while not it.finished:
-                diff = np.dot(exog[it.multi_index] - points, inv_bw) / it[1]
-                out += it[2] * kernel(diff)
-                it.iternext()
+            dw = 1 if weights.shape[0] > 1 else 0
+            da = 1 if adjust.shape[0] > 1 else 0
+            na = 0
+            nw = 0
+            n = self.npts
+            energy = np.empty((points.shape[0],), dtype=out.dtype)
+            #print("iterate on exog")
+            for idx in range(n):
+                diff = inv_bw_fct(points - exog[idx])
+                kernel.pdf(diff, out=energy)
+                energy *= weights[nw] / adjust[na]
+                out += energy
+                # Iteration for weights and adjust
+                na += da
+                nw += dw
+            out *= det_inv_bw
 
         out /= self.total_weights
 

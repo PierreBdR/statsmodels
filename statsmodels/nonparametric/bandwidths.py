@@ -30,7 +30,7 @@ def variance_bandwidth(factor, exog):
     if d == 1:
         spread = _spread1d(exog)
     else:
-        spread = np.atleast_2d(linalg.sqrtm(np.cov(exog, rowvar=1, bias=False)))
+        spread = np.atleast_2d(linalg.sqrtm(np.cov(exog, rowvar=0, bias=False)))
     return spread * factor
 
 def diagonal_bandwidth(factor, exog):
@@ -52,7 +52,7 @@ def silverman_bandwidth(model):
     return diagonal_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
 
 
-def scotts_bandwidth(model=None):
+def scotts_bandwidth(model):
     r"""
     The Scotts bandwidth is defined as a variance bandwidth with factor:
 
@@ -64,6 +64,21 @@ def scotts_bandwidth(model=None):
     n, d = exog.shape
     return diagonal_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
 
+def scotts_bandwidth_full(model):
+    """
+    Scotts bandwidths, based on covariance only, and returning a full matrix
+    """
+    exog = atleast_2df(model.exog)
+    n, d = exog.shape
+    return variance_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
+
+def silverman_bandwidth_full(model):
+    """
+    Silverman bandwidths, based on covariance only, and returning a full matrix
+    """
+    exog = atleast_2df(model.exog)
+    n, d = exog.shape
+    return variance_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
 
 def _botev_fixed_point(t, M, I, a2):
     l = 7
