@@ -1,7 +1,7 @@
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, optimize, linalg
-from .kde_utils import large_float, finite
+from .kde_utils import large_float, finite, atleast_2df
 from statsmodels.compat.python import range
 from scipy.stats import scoreatpercentile as sap
 
@@ -13,8 +13,8 @@ def _spread(X):
     ----------
     Silverman (1986) p.47
     """
-    IQR = (sap(X, 75, axis=1) - sap(X, 25, axis=1))/1.349
-    return np.minimum(np.std(X, axis=1, ddof=1), IQR)
+    IQR = (sap(X, 75, axis=0) - sap(X, 25, axis=0))/1.349
+    return np.minimum(np.std(X, axis=0, ddof=1), IQR)
 
 def variance_bandwidth(factor, exog):
     r"""
@@ -26,8 +26,8 @@ def variance_bandwidth(factor, exog):
 
     where :math:`\tau` is a correcting factor that depends on the method.
     """
-    n = exog.shape[0]
-    if n == 1:
+    d = exog.shape[1]
+    if d == 1:
         spread = _spread1d(exog)
     else:
         spread = np.atleast_2d(linalg.sqrtm(np.cov(exog, rowvar=1, bias=False)))
@@ -47,8 +47,8 @@ def silverman_bandwidth(model):
 
         \tau = \left( n \frac{d+2}{4} \right)^\frac{-1}{d+4}
     """
-    exog = np.atleast_2d(model.exog)
-    d, n = exog.shape
+    exog = atleast_2df(model.exog)
+    n, d = exog.shape
     return diagonal_bandwidth(0.9 * (n ** (-1. / (d + 4.))), exog)
 
 
@@ -60,8 +60,8 @@ def scotts_bandwidth(model=None):
 
         \tau = n^\frac{-1}{d+4}
     """
-    exog = np.atleast_2d(model.exog)
-    d, n = exog.shape
+    exog = atleast_2df(model.exog)
+    n, d = exog.shape
     return diagonal_bandwidth((n * (d + 2.) / 4.) ** (-1. / (d + 4.)), exog)
 
 

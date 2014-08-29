@@ -7,7 +7,10 @@ This module contains a set of methods to compute multivariates KDEs.
 import numpy as np
 from scipy import linalg
 from statsmodels.compat.python import range
-from .kde_utils import numpy_trans_method
+from .kde_utils import numpy_trans_method, atleast_2df
+from numpy import newaxis
+from . import kde1d_methods
+from copy import copy as shallow_copy
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -30,7 +33,7 @@ def generate_grid(kde, N=None, cut=None):
     N = kde.grid_size(N)
     if cut is None:
         cut = kde.kernel.cut
-    cut = dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
+    cut = np.dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
     lower = np.array(kde.lower)
     upper = np.array(kde.upper)
     ndim = kde.ndim
@@ -42,7 +45,7 @@ def generate_grid(kde, N=None, cut=None):
     xi = [ np.linspace(lower[i], upper[i], N) for i in range(ndim) ]
     return np.meshgrid(*xi)
 
-def compute_bandwidth(kde):
+def _compute_bandwidth(kde):
     """
     Compute the bandwidth and covariance for the estimated model, based of its 
     exog attribute
@@ -53,22 +56,14 @@ def compute_bandwidth(kde):
             bw = kde.bandwidth(kde)
         else:
             bw = kde.bandwidth
-        bw = np.atleast_2d(bw)
-        if bw.shape == (1,1):
-            bw = bw[0,0] * np.identity(n)
-        assert bw.shape == (n,n)
-        return bw, np.dot(bw, bw)
+        return bw, None
     elif kde.covariance is not None:
         if callable(kde.covariance):
             cov = kde.covariance(kde)
         else:
             cov = kde.covariance
-        cov = np.atleast_2d(cov)
-        if cov.shape == (1,1):
-            cov = cov[0,0] * np.identity(n)
-        assert cov.shape == (n,n)
-        return linalg.sqrtm(cov), cov
-    raise ValueError("Bandwidth or covariance needs to be specified")
+        return None, cov
+    return None, None
 
 class KDEnDMethod(object):
     """
@@ -122,27 +117,30 @@ class KDEnDMethod(object):
         dimension of the problem.
         """
         ndim = kde.ndim
+        if ndim == 1 and type(self) == KernelnD:
+            method = kde1d_methods.Cyclic()
+            return method.fit(kde, compute_bandwidth)
         npts = kde.npts
         fitted = self.copy()
-        if compute_bandwidth:
-            bw, cov = compute_bandwidth(kde)
-            assert bw.shape == (ndim, ndim)
-            assert cov.shape == (ndim, ndim)
-            fitted._bw = bw
-            fitted._cov = cov
-            fitted._inv_bw = linalg.inv(bw)
-        assert kde.exog.shape == (ndim, npts)
         fitted._exog = kde.exog
         assert kde.upper.shape == (ndim,)
         fitted._upper = kde.upper
-        assert len(kde.lower) == (ndim,)
+        assert kde.lower.shape == (ndim,)
         fitted._lower = kde.lower
         fitted._kernel = kde.kernel.for_ndim(ndim)
-        assert kde.weights.shape == (npts,) or kde.weights.shape == ()
+        assert kde.weights.ndim == 0 or kde.weights.shape == (npts,)
         fitted._weights = kde.weights
-        assert kde.adjust.shape == (npts,) or kde.adjust.shape == ()
+        assert kde.adjust.ndim == 0 or kde.adjust.shape == (npts,)
         fitted._adjust = kde.adjust
         fitted._total_weights = kde.total_weights
+        if compute_bandwidth:
+            bw, cov = _compute_bandwidth(kde)
+            if bw is not None:
+                fitted.bandwidth = bw
+            elif cov is not None:
+                fitted.covariance = cov
+            else:
+                raise ValueError("Error, no bandwidth or covariance have been specified")
         return fitted
 
     def copy(self):
@@ -171,14 +169,14 @@ class KDEnDMethod(object):
         """
         Dimension of the problem
         """
-        return self._exog.shape[0]
+        return self._exog.shape[1]
 
     @property
     def npts(self):
         """
         Number of points in the setup
         """
-        return self._exog.shape[1]
+        return self._exog.shape[0]
 
     @property
     def bandwidth(self):
@@ -191,25 +189,25 @@ class KDEnDMethod(object):
         return self._bw
 
     @bandwidth.setter
-    def bandwidth(self, val):
-        val = np.atleast_2d(val)
-        if val.shape == (1,1):
-            val.shape = ()
-            cov = val*val
-            inv_bw = 1/val
+    def bandwidth(self, bw):
+        bw = np.asarray(bw).squeeze()
+        if bw.ndim == 0:
+            cov = bw*bw
+            inv_bw = 1/bw
             det_inv_bw = inv_bw
-        elif val.shape[0] == 1:
-            val.shape = (val.shape[1],)
-            assert val.shape[0] == self.ndim
-            cov = val * val
+        elif bw.ndim == 1:
+            assert bw.shape[0] == self.ndim
+            cov = bw * bw
             inv_bw = 1 / bw
             det_inv_bw = np.product(inv_bw)
-        else:
-            assert val.shape == (self.ndim, self.ndim)
-            cov = dot(val, val)
-            inv_bw = linalg.inv(val)
+        elif bw.ndim == 2:
+            assert bw.shape == (self.ndim, self.ndim)
+            cov = np.dot(bw, bw)
+            inv_bw = linalg.inv(bw)
             det_inv_bw = linalg.det(inv_bw)
-        self._bw = val
+        else:
+            raise ValueError("Error, specified bandiwdth has more than 2 dimension")
+        self._bw = bw
         self._cov = cov
         self._inv_bw = inv_bw
         self._det_inv_bw = det_inv_bw
@@ -239,14 +237,20 @@ class KDEnDMethod(object):
         return self._cov
 
     @covariance.setter
-    def covariance(self, val):
-        val = np.atleast_2d(val)
-        if val.shape == (1,1):
-            val = val[0,0] * np.identity(self.ndim)
-        assert val.shape == (self.ndim, self.ndim)
-        bw = sqrtm(val)
+    def covariance(self, cov):
+        cov = np.asarray(cov)
+        if cov.ndim == 0:
+            bw = np.sqrt(cov)
+        elif cov.ndim == 1:
+            assert cov.shape[0] == self.ndim
+            bw = np.sqrt(cov)
+        elif cov.ndim == 2:
+            assert cov.shape == (self.ndim, self.ndim)
+            bw = sqrtm(cov)
+        else:
+            raise ValueError("Error, specified covariance has more than 2 dimension")
         self.bandwidth = bw
-        self._cov = val
+        self._cov = cov
 
     @property
     def exog(self):
@@ -262,7 +266,7 @@ class KDEnDMethod(object):
 
     @exog.setter
     def exog(self, value):
-        value = np.atleast_2d(value)
+        value = atleast_2df(value)
         assert value.shape == self._exog.shape
         self._exog = value
 
@@ -355,7 +359,7 @@ class KDEnDMethod(object):
             return all(self.bounded(i) for i in range(self.ndim))
         return self.lower[dim] > -np.inf or self.upper[dim] < np.inf
 
-    @numpy_trans_method(2, 1)
+    @numpy_trans_method('ndim', 1)
     def pdf(self, points, out):
         """
         Compute the PDF of the estimated distribution.
@@ -374,15 +378,17 @@ class KDEnDMethod(object):
         :Default: Direct implementation of the formula for unbounded pdf
             computation.
         """
-        points = np.atleast_2d(points)
         exog = self.exog
 
-        d = points.shape[0]
-        m = points.shape[1:]
+        d = points.shape[-1]
+        pts_shape = points.shape[:-1]
+        m = np.prod(pts_shape)
         assert d == self.ndim
 
         kernel = self.kernel
         inv_bw = self.inv_bandwidth
+        if inv_bw.ndim == 1:
+            inv_bw = np.diag(inv_bw)
         det_inv_bw = self.det_inv_bandwidth
         weights = self.weights
         adjust = self.adjust
@@ -392,20 +398,21 @@ class KDEnDMethod(object):
         else:
             out.setfield(0., dtype=float)
 
-        factor = (weight * det_inv_bw) / adjust
+        factor = (weights * det_inv_bw) / adjust
         if self.npts > m:
             # There are fewer points that data: loop over points
-            for i in range(m):
-                diff = dot(inv_bw, exog - points[:, i, np.newaxis]) / adjust)
+            for idx in np.ndindex(*points.shape[:-1]):
+                diff = np.dot(exog - points[idx], inv_bw) / adjust
                 energy = kernel(diff)
                 energy *= factor
-                out[i] = sum(energy)
+                out[idx] = np.sum(energy)
         else:
             # There are fewer data that points: loop over data
-            _, factor, adjust = np.broadcast_arrays(exog[0], factor, adjust)
-            for b in range(self.npts):
-                diff = dot(inv_bw, exog[:, i, newaxis] - points) / adjust[i]
-                out += factor[i] * kernel(diff)
+            it = np.nditer((exog[...,0], adjust, factor), flags=['multi_index'])
+            while not it.finished:
+                diff = np.dot(exog[it.multi_index] - points, inv_bw) / it[1]
+                out += it[2] * kernel(diff)
+                it.iternext()
 
         out /= self.total_weights
 
@@ -417,10 +424,11 @@ class KDEnDMethod(object):
         """
         return self.pdf(points, out)
 
-    def cdf(self, points, out=None):
+    @numpy_trans_method('ndim', 1)
+    def cdf(self, points, out):
         bw = self.bandwidth
         if bw.ndim < 2: # We have a diagonal matrix
-            pass
+            exog = self.exog
         else:
             pass
 

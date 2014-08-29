@@ -72,7 +72,7 @@ def generate_grid(kde, N=None, cut=None):
         upper = kde.upper
     return np.linspace(lower, upper, N)
 
-def compute_bandwidth(kde):
+def _compute_bandwidth(kde):
     """
     Compute the bandwidth and covariance for the estimated model, based of its 
     exog attribute
@@ -143,7 +143,7 @@ class KDE1DMethod(object):
         assert kde.ndim == 1, "Error, this is a 1D method, expecting a 1D problem"
         fitted = self.copy()
         if compute_bandwidth:
-            bw, cov = compute_bandwidth(kde)
+            bw, cov = _compute_bandwidth(kde)
             fitted._bw = bw
             fitted._cov = cov
         fitted._exog = kde.exog.reshape((kde.npts,))
