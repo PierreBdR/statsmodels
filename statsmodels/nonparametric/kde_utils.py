@@ -5,6 +5,7 @@ Module contained a variety of small useful functions.
 """
 
 from __future__ import division, print_function, absolute_import
+from ..compat.python import string_types
 from collections import OrderedDict
 from keyword import iskeyword as _iskeyword
 from operator import itemgetter as _itemgetter
@@ -58,8 +59,10 @@ def make_ufunc(nin = None, nout=1):
         return np.frompyfunc(fct, Nin, nout)
     return f
 
-def _process_trans_args(z, out, input_dim, output_dim):
+def _process_trans_args(z, out, input_dim, output_dim, dtype):
     z = np.asarray(z)
+    if dtype is not None:
+        z = z.astype(dtype)
     input_shape = z.shape
     need_transpose = False
     # Compute data shape (i.e. input without the dimension)
@@ -94,7 +97,11 @@ def _process_trans_args(z, out, input_dim, output_dim):
                 output_shape = data_shape + (output_dim,)
         else:
             output_shape = data_shape
-        out = write_out = np.empty(output_shape, dtype=type(z.dtype.type() + 0.))
+        if dtype is None:
+            dtype = z.dtype
+            if issubclass(dtype.type, np.integer):
+                dtype = np.float64
+        out = write_out = np.empty(output_shape, dtype=dtype)
         if z_empty and output_dim == 1:
             out = write_out.reshape(())
     else:
@@ -105,7 +112,7 @@ def _process_trans_args(z, out, input_dim, output_dim):
         z = z.T
     return z, write_out, out
 
-def numpy_trans(input_dim, output_dim):
+def numpy_trans(input_dim, output_dim, dtype=None):
     """
     Decorator to create a function taking a single array-like argument and return a numpy array with the same number of 
     points.
@@ -120,9 +127,16 @@ def numpy_trans(input_dim, output_dim):
             = 0 : This is an invalid value.
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
+
     output_dim: int
         Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or 
         less.
+
+    dtype: dtype or None
+        Expected types of the arrays. The input array is converted to this type. If set to None, the input array is left 
+        untouched.
+        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
+        given the same as the input array, unless it is an integer, in which case the output will be a float64.
     """
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
@@ -136,7 +150,7 @@ def numpy_trans(input_dim, output_dim):
 
 numpy_trans1d = numpy_trans(0, 1)
 
-def numpy_trans_method(input_dim, output_dim):
+def numpy_trans_method(input_dim, output_dim, dtype=None):
     """
     Decorator to create a method taking a single array-like argument and return a numpy array with the same number of 
     points.
@@ -145,22 +159,46 @@ def numpy_trans_method(input_dim, output_dim):
 
     Parameters
     ----------
-    input_dim: int
+    input_dim: int or str
         Number of dimensions of the input. The behavior depends on the value:
             < 0 : The last index is the dimension, but it is of variable size.
             = 0 : There is no index for the dimension (e.g. 1D)
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
-    output_dim: int
+        If a string, it should be the name of an attribute containing the input dimension.
+
+    output_dim: int or str
         Dimension of the output. If more than 1, the last index of the output array is the dimension. If cannot be 0 or 
         less.
+        If a string, it should be the name of an attribute containing the output dimension
+
+    dtype: dtype or None
+        Expected types of the arrays. The input array is converted to this type. If set to None, the input array is left 
+        untouched.
+        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
+        given the same as the input array, unless it is an integer, in which case the output will be a float64.
     """
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
+    # Resolve how to get input dimension
+    if isinstance(input_dim, string_types):
+        def get_input_dim(self):
+            return getattr(self, input_dim)
+    else:
+        def get_input_dim(self):
+            return input_dim
+    # Resolve how to get output dimension
+    if isinstance(output_dim, string_types):
+        def get_output_dim(self):
+            return getattr(self, output_dim)
+    else:
+        def get_output_dim(self):
+            return output_dim
+    # Decorator itself
     def decorator(fct):
         def f(self, z, out=None):
-            z, write_out, out = process_args(z, out, input_dim, output_dim)
-            out = fct(self, z, out=write_out)
+            z, write_out, out = _process_trans_args(z, out, get_input_dim(self), get_output_dim(self), dtype)
+            fct(self, z, out=write_out)
             return out
         return f
     return decorator

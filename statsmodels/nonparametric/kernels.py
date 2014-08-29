@@ -11,7 +11,7 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .kde_utils import make_ufunc, numpy_method_idx
+from .kde_utils import make_ufunc, numpy_trans_method, numpy_trans1d_method
 from . import _kernels
 from copy import copy as shallowcopy
 
@@ -98,7 +98,8 @@ class Kernel1D(object):
         """
         return self.pdf(z, out=out)
 
-    def cdf(self, z, out=None):
+    @numpy_trans1d_method
+    def cdf(self, z, out):
         r"""
         Returns the cumulative density function on the points `z`, i.e.:
 
@@ -106,7 +107,6 @@ class Kernel1D(object):
 
             K_0(z) = \int_{-\infty}^z K(t) dt
         """
-        z = np.asfarray(z)
         try:
             comp_cdf = self.__comp_cdf
         except AttributeError:
@@ -120,11 +120,10 @@ class Kernel1D(object):
                     x = upper
                 return integrate.quad(self.pdf, lower, x)[0]
             self.__comp_cdf = comp_cdf
-        if out is None:
-            out = np.empty(z.shape, dtype=float)
         return comp_cdf(z, out=out)
 
-    def pm1(self, z, out=None):
+    @numpy_trans1d_method
+    def pm1(self, z, out):
         r"""
         Returns the first moment of the density function, i.e.:
 
@@ -132,7 +131,6 @@ class Kernel1D(object):
 
             K_1(z) = \int_{-\infty}^z z K(t) dt
         """
-        z = np.asfarray(z)
         try:
             comp_pm1 = self.__comp_pm1
         except AttributeError:
@@ -148,11 +146,10 @@ class Kernel1D(object):
                     x = upper
                 return integrate.quad(pm1, lower, x)[0]
             self.__comp_pm1 = comp_pm1
-        if out is None:
-            out = np.empty(z.shape, dtype=float)
         return comp_pm1(z, out=out)
 
-    def pm2(self, z, out=None):
+    @numpy_trans1d_method
+    def pm2(self, z, out):
         r"""
         Returns the second moment of the density function, i.e.:
 
@@ -160,7 +157,6 @@ class Kernel1D(object):
 
             K_2(z) = \int_{-\infty}^z z^2 K(t) dt
         """
-        z = np.asfarray(z)
         try:
             comp_pm2 = self.__comp_pm2
         except AttributeError:
@@ -393,6 +389,11 @@ class KernelnD(object):
     def for_ndim(self, ndim):
         """
         Create a version of the same kernel, but for dimension ``ndim``
+
+        Notes
+        -----
+        The default version copies the object, and changed the :py:attr:`ndim` attribute. If this is not sufficient, you 
+        need to override this method.
         """
         if ndim == self.ndim:
             return self
@@ -421,7 +422,8 @@ class KernelnD(object):
         """
         return self.pdf(z, out=out)
 
-    def cdf(self, z, out=None):
+    @numpy_trans_method('ndim', 1)
+    def cdf(self, z, out):
         z = np.asfarray(z)
         try:
             comp_cdf = self.__comp_cdf
@@ -438,8 +440,6 @@ class KernelnD(object):
                 xs = np.minimum(xs, upper)
                 return integrate.nquad(pdf, [(lower, x) for x in xs])[0]
             self.__comp_cdf = comp_cdf
-        if out is None:
-            out = np.empty(z.shape[1:], dtype=float)
         return comp_cdf(*z, out=out)
 
 class normal_kernel(KernelnD):
@@ -461,7 +461,8 @@ class normal_kernel(KernelnD):
         super(normal_kernel, self).__init__(dim)
         self.factor = 1 / np.sqrt(2 * np.pi) ** dim
 
-    def pdf(self, xs, out=None):
+    @numpy_trans_method('ndim', 1)
+    def pdf(self, xs, out):
         """
         Return the probability density of the function.
 
@@ -469,25 +470,20 @@ class normal_kernel(KernelnD):
             and N the number of points.
         :returns: an array of shape (N,) with the density on each point of ``xs``
         """
-        xs = np.asarray(xs)
-        if out is None:
-            out = np.empty(xs.shape[1:], dtype=float)
-        np.sum(xs*xs, axis=0, out=out)
+        np.sum(xs*xs, axis=-1, out=out)
         out *= -0.5
         np.exp(out, out=out)
         out *= self.factor
         return out
 
-    def cdf(self, xs, out=None):
+    @numpy_trans_method('ndim', 1)
+    def cdf(self, xs, out):
         """
         Return the CDF of the normal kernel
         """
-        xs = np.asarray(xs)
-        if out is None:
-            out = np.empty(xs.shape[1:], dtype=float)
         tmp = erf(xs / np.sqrt(2))
         tmp += 1
-        np.prod(tmp, axis=0, out=out)
+        np.prod(tmp, axis=-1, out=out)
         out /= 2**self.ndim
         return out
 

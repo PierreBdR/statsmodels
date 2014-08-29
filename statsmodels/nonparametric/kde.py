@@ -58,10 +58,11 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from . import kernels, bandwidths
 from . import kde1d_methods
-#from . import kdend_methods
-from .kde_utils import numpy_method_idx
+from . import kdend_methods
+from .kde_utils import atleast_2df
 
-default_method = kde1d_methods.Reflection
+#default_method = kde1d_methods.Reflection
+default_method = kdend_methods.KDEnDMethod
 
 class KDE(object):
     r"""
@@ -121,8 +122,8 @@ class KDE(object):
 
     @exog.setter
     def exog(self, xs):
-        self._exog = np.atleast_2d(xs)
-        assert self._exog.ndim == 2, "The attribute 'exog' must be a one-dimension array"
+        self._exog = atleast_2df(xs)
+        assert self._exog.ndim == 2, "The attribute 'exog' must be a two-dimension array"
 
     @property
     def kernel(self):
@@ -271,14 +272,14 @@ class KDE(object):
         """
         Return the number of dimensions of the problem
         """
-        return self._exog.shape[0]
+        return self._exog.shape[1]
 
     @property
     def npts(self):
         """
         Return the number of points in the exogenous dataset.
         """
-        return self._exog.shape[1]
+        return self._exog.shape[0]
 
     @property
     def method(self):
