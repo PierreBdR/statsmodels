@@ -142,7 +142,7 @@ def numpy_trans(input_dim, output_dim, dtype=None):
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
     def decorator(fct):
         def f(z, out=None):
-            z, write_out, out = _process_trans_args(z, out, input_dim, output_dim)
+            z, write_out, out = _process_trans_args(z, out, input_dim, output_dim, dtype)
             fct(z, out=write_out)
             return out
         return f
@@ -203,7 +203,7 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
         return f
     return decorator
 
-numpy_trans1d_method = numpy_trans(0, 1)
+numpy_trans1d_method = numpy_trans_method(0, 1)
 
 def namedtuple(typename, field_names, verbose=False, rename=False):
     """Returns a new subclass of tuple with named fields.
