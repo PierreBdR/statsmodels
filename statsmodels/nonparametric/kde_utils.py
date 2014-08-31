@@ -60,6 +60,9 @@ def make_ufunc(nin = None, nout=1):
     return f
 
 def _process_trans_args(z, out, input_dim, output_dim, dtype):
+    """
+    This function is the heart of the numpy_trans* functions.
+    """
     z = np.asarray(z)
     if dtype is not None:
         z = z.astype(dtype)
@@ -102,25 +105,27 @@ def _process_trans_args(z, out, input_dim, output_dim, dtype):
             dtype = z.dtype
             if issubclass(dtype.type, np.integer):
                 dtype = np.float64
-        write_out = out = np.empty(output_shape, dtype=dtype)
+        out = np.empty(output_shape, dtype=dtype)
+        write_out = out.view()
         if z_empty and output_dim == 1:
-            out = out.reshape(())
+            out.shape = ()
     else:
-        write_out = out
+        write_out = out.view()
     # Transpose if needed
     if input_dim != 0:
         size_data = np.prod(data_shape)
         if output_dim > 1:
             if need_transpose:
-                write_out = write_out.reshape(output_dim, size_data)
+                write_out.shape = (output_dim, size_data)
             else:
-                write_out = write_out.reshape(size_data, output_dim)
+                write_out.shape = (size_data, output_dim)
         else:
-            write_out = write_out.reshape(size_data)
+            write_out.shape = (size_data,)
+        z = z.view()
         if need_transpose:
-            z = z.reshape(input_dim, size_data)
+            z.shape = (input_dim, size_data)
         else:
-            z = z.reshape(size_data, input_dim)
+            z.shape = (size_data, input_dim)
     if need_transpose:
         write_out = write_out.T
         z = z.T
