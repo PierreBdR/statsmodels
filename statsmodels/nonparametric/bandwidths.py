@@ -96,7 +96,6 @@ def _botev_fixed_point(t, M, I, a2):
     return t - (2 * M * np.sqrt(np.pi) * f) ** (-2 / 5)
 
 
-
 class botev_bandwidth(object):
     """
     Implementation of the KDE bandwidth selection method outline in:
@@ -152,7 +151,7 @@ class botev_bandwidth(object):
 
         return np.sqrt(t_star) * span
 
-class CV_LeastSquare(object):
+class leastsquare_cv_bandwidth(object):
     """
     Implement the Cross-Validation Least Square bandwidth estimation method.
 
@@ -168,5 +167,6 @@ class CV_LeastSquare(object):
 
     This is the general formula for the IMSE.
     """
-    pass
-
+    def __call__(self, model):
+        init_bw = scotts_bandwidth(model)
+        test_model = model.copy()
