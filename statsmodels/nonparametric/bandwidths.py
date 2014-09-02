@@ -151,22 +151,5 @@ class botev_bandwidth(object):
 
         return np.sqrt(t_star) * span
 
-class leastsquare_cv_bandwidth(object):
-    """
-    Implement the Cross-Validation Least Square bandwidth estimation method.
+from .bw_crossvalidation import leastsquare_cv_bandwidth
 
-    Notes
-    -----
-    For more details see pp. 16, 27 in Ref. [1] (see module docstring).
-
-    Returns the value of the bandwidth that maximizes the integrated mean
-    square error between the estimated and actual distribution.  The
-    integrated mean square error (IMSE) is given by:
-
-    .. math:: \int\left[\hat{f}(x)-f(x)\right]^{2}dx
-
-    This is the general formula for the IMSE.
-    """
-    def __call__(self, model):
-        init_bw = scotts_bandwidth(model)
-        test_model = model.copy()

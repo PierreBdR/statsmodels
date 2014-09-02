@@ -112,13 +112,14 @@ class Kernel1D(object):
         except AttributeError:
             lower = self.lower
             upper = self.upper
+            pdf = self.pdf
             @make_ufunc()
             def comp_cdf(x):
                 if x <= lower:
                     return 0
                 if x >= upper:
                     x = upper
-                return integrate.quad(self.pdf, lower, x)[0]
+                return integrate.quad(pdf, lower, x)[0]
             self.__comp_cdf = comp_cdf
         return comp_cdf(z, out=out)
 
@@ -172,8 +173,6 @@ class Kernel1D(object):
                     x = upper
                 return integrate.quad(pm2, lower, x)[0]
             self.__comp_pm2 = comp_pm2
-        if out is None:
-            out = np.empty(z.shape, dtype=float)
         return comp_pm2(z, out=out)
 
     def fft(self, z, out=None):
@@ -223,6 +222,75 @@ class Kernel1D(object):
         out[...] = fftpack.dct(out, overwrite_x = True)
         return out
 
+    @numpy_trans1d_method
+    def _convolution(self, z, out):
+        r"""
+        Convolution kernel.
+
+        The definition of a convolution kernel is:
+
+        .. math::
+
+            \bar{K(x)} = (K \otimes K)(x) = \int_{\mathcal{R}} K(y) K(x-y) dy
+
+        Notes
+        -----
+
+        The computation of the convolution is, by default, very expensive. Most kernels should define this methods in 
+        addition to the PDF.
+        """
+        try:
+            comp_conv = self.__comp_conv
+        except AttributeError:
+            pdf = self.pdf
+            #@make_ufunc()
+            #def comp_conv(x):
+                #def product(y):
+                    #return pdf(y) * pdf(x-y)
+                #return integrate.quad(product, -np.inf, np.inf)[0]
+            def comp_conv(x, support, support_out, out):
+                sup_pdf = pdf(support)
+                dx = support[1] - support[0]
+                @make_ufunc(1,1)
+                def comp(x):
+                    np.subtract(x, support, out=support_out)
+                    pdf(support_out, out=support_out)
+                    np.multiply(support_out, sup_pdf, out=support_out)
+                    return np.sum(support_out)*dx
+                return comp(x, out=out)
+            self.__comp_conv = comp_conv
+        sup = np.linspace(-2.5*self.cut, 2.5*self.cut, 2**16)
+        sup_out = np.empty(sup.shape, sup.dtype)
+        return comp_conv(z, sup, sup_out, out=out)
+        #return comp_conv(z, out=out)
+
+    @property
+    def convolution(self):
+        if not hasattr(self, '_convolve_kernel'):
+            self._convolve_kernel = kernelFromPDF(self._convolution)
+        return self._convolve_kernel
+
+    @numpy_trans1d_method
+    def convolution2(self, z, out):
+        try:
+            comp_conv = self.__comp_conv2
+        except AttributeError:
+            pdf = self.pdf
+            @make_ufunc()
+            def comp_conv(x):
+                def product(y):
+                    return pdf(y) * pdf(x-y)
+                return integrate.quad(product, -np.inf, np.inf)[0]
+            self.__comp_conv2 = comp_conv
+        return comp_conv(z, out=out)
+
+def kernelFromPDF(name, _pdf):
+    def ConvolveKernel(Kernel1D):
+        def pdf(self, w, out=None):
+            return _pdf(z, out)
+        __call_ = pdf
+    return ConvolveKernel
+
 class normal_kernel1d(Kernel1D):
     """
     1D normal density kernel with extra integrals for 1D bounded kernel estimation.
@@ -245,6 +313,16 @@ class normal_kernel1d(Kernel1D):
         :returns: an array of shape identical to ``xs``
         """
         return _kernels.norm1d_pdf(z, out)
+
+    def convolution(self, z, out=None):
+        r"""
+        Return the PDF of the normal convolution kernel, given by:
+
+        .. math::
+
+            \bar{K}(x) = \frac{1}{2\sqrt{\pi}} e^{-\frac{x^2}{4}}
+        """
+        return _kernels.norm1d_convolution(z, out)
 
     def _pdf(self, z, out=None):
         """
