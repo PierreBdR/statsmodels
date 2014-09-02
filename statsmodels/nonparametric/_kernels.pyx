@@ -13,8 +13,10 @@ ctypedef np.npy_float64 float64_t
 ctypedef np.npy_complex128 complex128_t
 #ctypedef np.npy_float128 float128_t
 
-cdef float64_t S2PI = sqrt(2.0*M_PI)
-cdef float64_t S2 = sqrt(2.0)
+cdef:
+    float64_t SPI = sqrt(M_PI)
+    float64_t S2PI = sqrt(2.0*M_PI)
+    float64_t S2 = sqrt(2.0)
 
 s2pi = S2PI
 s2 = S2
@@ -65,6 +67,12 @@ cdef float64_t _norm1d_pdf(float64_t z):
 def norm1d_pdf(object z, object out = None):
     return vectorize(z, out, _norm1d_pdf)
 
+cdef float64_t _norm1d_convolution(float64_t z):
+    return exp(-z*z/4)/(2*SPI)
+
+def norm1d_convolution(object z, object out = None):
+    return vectorize(z, out, _norm1d_convolution)
+
 cdef float64_t _norm1d_cdf(float64_t z):
     return erf(z/S2) / 2 + 0.5
 
@@ -91,9 +99,12 @@ tricube_width = tricube_a
 
 cdef float64_t _tricube_pdf(float64_t z):
     z *= tricube_a
-    if z < -1 or z > 1:
+    if z < 0:
+        z = -z
+    if z > 1:
         return 0
-    return 70./81*pow(1 - pow(fabs(z), 3.), 3.) * tricube_a
+    cdef float64_t z3_1 = 1-z*z*z
+    return 70./81*(z3_1*z3_1*z3_1) * tricube_a
 
 def tricube_pdf(object z, object out = None):
     return vectorize(z, out, _tricube_pdf)
@@ -147,6 +158,52 @@ cdef float64_t _tricube_pm2(float64_t z):
 def tricube_pm2(object z, object out = None):
     return vectorize(z, out, _tricube_pm2)
 
+cdef float64_t _tricube_convolution_above_1(float64_t z):
+    cdef:
+        float64_t z2 = z*z
+        float64_t z3 = z2*z
+        float64_t z4 = z3*z
+        float64_t z5 = z4*z
+        float64_t z6 = z5*z
+        float64_t z7 = z6*z
+        float64_t z8 = z7*z
+        float64_t z9 = z8*z
+        float64_t z10 = z9*z
+        float64_t z13 = z10*z3
+        float64_t z16 = z13*z3
+        float64_t z19 = z16*z3
+    return (-z19/923780 + 3*z16/40040 - 57*z13/20020 + 31*z10/140 - 81*z9/70 +
+            729*z8/220 - 969*z7/140 + 9963*z6/910 - 729*z5/55 + 66*z4/5 - 972*z3/91 +
+            5832*z2/935 - 16*z/5 + 2592./1729.)
+
+cdef float64_t _tricube_convolution_below_1(float64_t z):
+    cdef:
+        float64_t z2 = z*z
+        float64_t z4 = z2*z2
+        float64_t z6 = z4*z2
+        float64_t z7 = z6*z
+        float64_t z8 = z7*z
+        float64_t z9 = z8*z
+        float64_t z10 = z9*z
+        float64_t z13 = z9*z4
+        float64_t z16 = z9*z7
+        float64_t z19 = z13*z6
+    return (3*z19/923780 - 3*z16/40040 + 111*z13/20020 - 31*z10/140 + 81*z9/70 - 729*z8/220 +
+            747*z7/140 - 729*z6/182 + 9*z4/5 - 19683 * z2 / 13090 + 6561. / 6916.)
+
+cdef float64_t _tricube_convolution(float64_t z):
+    z *= tricube_a
+    if z < 0:
+        z = -z
+    if z > 2:
+        return 0
+    if z > 1:
+        return _tricube_convolution_above_1(z) * tricube_a * 4900/6561
+    return _tricube_convolution_below_1(z) * tricube_a * 4900/6561
+
+def tricube_convolution(object z, object out = None):
+    return vectorize(z, out, _tricube_convolution)
+
 cdef float64_t epanechnikov_a = 1./sqrt(5.)
 epanechnikov_width = epanechnikov_a
 
@@ -160,6 +217,18 @@ cdef float64_t _epanechnikov_pdf(float64_t z):
 
 def epanechnikov_pdf(object z, object out = None):
     return vectorize(z, out, _epanechnikov_pdf)
+
+cdef float64_t _epanechnikov_convolution(float64_t z):
+    if z < 0:
+        z = -z
+    z *= epanechnikov_a
+    cdef float64_t z2 = 2 - z
+    if z2 < 0:
+        return 0
+    return 3./160.*(z2*z2*z2)*(4 + 6*z + z*z)*epanechnikov_a
+
+def epanechnikov_convolution(object z, object out = None):
+    return vectorize(z, out, _epanechnikov_convolution)
 
 cdef float64_t _epanechnikov_cdf(float64_t z):
     z *= epanechnikov_a

@@ -36,7 +36,7 @@ References:
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
-from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d
+from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d, finite
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D

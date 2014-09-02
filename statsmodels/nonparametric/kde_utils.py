@@ -143,7 +143,8 @@ def numpy_trans(input_dim, output_dim, dtype=None):
     input_dim: int
         Number of dimensions of the input. The behavior depends on the value:
             < 0 : The last index is the dimension, but it is of variable size.
-            = 0 : This is an invalid value.
+            = 0 : The array is passed as-is to the calling method and is assumed to be 1D. The output will have either
+                  the same shape, or the same shape with another index for the dimension is output_dim > 1.
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
 
@@ -172,6 +173,26 @@ def numpy_trans(input_dim, output_dim, dtype=None):
     return decorator
 
 def numpy_trans1d(fct):
+    """
+    This decorator helps provide a uniform interface to 1D numpy transformation functions.
+
+    The returned function takes any array-like argument and transform it as a 1D ndarray sent to the decorated function. 
+    If the `out` argument is not provided, it will be allocated with the same size and shape as the first argument. And 
+    as with the first argument, it will be reshaped as a 1D ndarray before being sent to the function.
+
+    Examples
+    --------
+
+    The following example illustrate how a 2D array will be passed as 1D, and the output allocated as the input 
+    argument:
+
+    >>> @numpy_trans1d
+    ... def broadsum(z, out):
+    ...   out[:] = np.sum(z, axis=0)
+    >>> broadsum([[1,2],[3,4]])
+    array([[ 10.,  10.], [ 10.,  10.]])
+
+    """
     def f(z, out=None):
         z = np.asarray(z)
         if out is None:
@@ -179,8 +200,16 @@ def numpy_trans1d(fct):
             if issubclass(dtype.type, np.integer):
                 dtype = np.float64
             out = np.empty(z.shape, dtype=dtype)
-        fct(z, out)
+        size_data = np.prod(z.shape)
+        if size_data == 0:
+            size_data = 1
+        z = z.view()
+        z.shape = (size_data,)
+        write_out = out.view()
+        write_out.shape = (size_data,)
+        fct(z, write_out)
         return out
+    return f
 
 
 def numpy_trans_method(input_dim, output_dim, dtype=None):
@@ -195,7 +224,8 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
     input_dim: int or str
         Number of dimensions of the input. The behavior depends on the value:
             < 0 : The last index is the dimension, but it is of variable size.
-            = 0 : There is no index for the dimension (e.g. 1D)
+            = 0 : The array is passed as-is to the calling method and is assumed to be 1D. The output will have either
+                  the same shape, or the same shape with another index for the dimension is output_dim > 1.
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
         If a string, it should be the name of an attribute containing the input dimension.
@@ -241,6 +271,9 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
     return decorator
 
 def numpy_trans1d_method(fct):
+    '''
+    This is the method equivalent to :py:fun:`numpy_trans1d`
+    '''
     def f(self, z, out=None):
         z = np.asarray(z)
         if out is None:
@@ -248,8 +281,16 @@ def numpy_trans1d_method(fct):
             if issubclass(dtype.type, np.integer):
                 dtype = np.float64
             out = np.empty(z.shape, dtype=dtype)
-        fct(z, out)
+        size_data = np.prod(z.shape)
+        if size_data == 0:
+            size_data = 1
+        z = z.view()
+        z.shape = (size_data,)
+        write_out = out.view()
+        write_out.shape = (size_data,)
+        fct(self, z, write_out)
         return out
+    return f
 
 def namedtuple(typename, field_names, verbose=False, rename=False):
     """Returns a new subclass of tuple with named fields.

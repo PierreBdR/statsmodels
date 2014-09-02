@@ -33,17 +33,23 @@ def generate_grid(kde, N=None, cut=None):
     N = kde.grid_size(N)
     if cut is None:
         cut = kde.kernel.cut
-    cut = np.dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
+    if kde.bandwidth.ndim == 0:
+        cut = kde.bandwidth * cut * np.ones(kde.ndim, dtype=float)
+    elif kde.bandwidth.ndim == 1:
+        cut = kde.bandwidth * cut
+    else:
+        cut = np.dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
     lower = np.array(kde.lower)
     upper = np.array(kde.upper)
     ndim = kde.ndim
     for i in range(ndim):
         if lower[i] == -np.inf:
-            lower[i] = np.min(kde.exog[i]) - cut[i]
+            lower[i] = np.min(kde.exog[:,i]) - cut[i]
         if upper[i] == np.inf:
-            upper[i] = np.max(kde.exog[i]) + cut[i]
-    xi = [ np.linspace(lower[i], upper[i], N) for i in range(ndim) ]
-    return np.meshgrid(*xi)
+            upper[i] = np.max(kde.exog[:,i]) + cut[i]
+    xi = tuple(np.s_[lower[i] : upper[i] : N*1j] for i in range(ndim))
+    gr = np.mgrid[xi]
+    return np.concatenate([g[...,None] for g in gr], axis=-1)
 
 def _compute_bandwidth(kde):
     """
@@ -77,6 +83,12 @@ class KDEnDMethod(object):
           used with the same arguments.
         - It is fair to assume all array-like arguments will be at least 2D arrays, with the first dimension denoting 
           the dimension.
+
+
+    Attributes
+    ----------
+    base_p2: int
+        Log2 of the number of points wanted in a grid.
     """
 
     name = 'unbounded'
@@ -93,6 +105,7 @@ class KDEnDMethod(object):
         self._inv_bw = None
         self._det_inv_bw = None
         self._cov = None
+        self.base_p2 = 10
 
     def fit(self, kde, compute_bandwidth=True):
         """
@@ -323,7 +336,7 @@ class KDEnDMethod(object):
             self._total_weights = np.sum(val)
         else:
             self._weights = np.asarray(1.)
-            self._total_weights = float(np.npts)
+            self._total_weights = float(self.npts)
 
     @property
     def total_weights(self):
@@ -434,7 +447,6 @@ class KDEnDMethod(object):
             out *= det_inv_bw
 
         out /= self.total_weights
-
         return out
 
     def __call__(self, points, out=None):
@@ -442,6 +454,10 @@ class KDEnDMethod(object):
         Call the :py:meth:`pdf` method.
         """
         return self.pdf(points, out)
+
+    def grid(self, N=None, cut=None):
+        gr = generate_grid(self, N, cut)
+        return gr, self.pdf(gr)
 
     @numpy_trans_method('ndim', 1)
     def cdf(self, points, out):
@@ -451,3 +467,27 @@ class KDEnDMethod(object):
         else:
             pass
 
+    def grid_size(self, N = None):
+        if N is None:
+            p2 = self.base_p2 // self.ndim
+            if self.base_p2 % self.ndim > 0:
+                p2 += 1
+            return 2**p2
+        return N
+
+def Cyclic(KDEnDMethod):
+    def fit(self, kde, compute_bandwidth = True):
+        if kde.ndim == 1:
+            cyc = kde1d_methods.Cyclic()
+            return cyc.fit(kde, compute_bandwidth)
+        super(Cyclic, self).fit(self, kde, compute_bandwidth)
+
+    def pdf(self, points):
+        for i in range(self.ndim):
+            if self.bounded(i) and not self.closed(i):
+                raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
+        if not self.bounded():
+            return super(KDEnDMethod, self).pdf(points)
+
+    def grid(self, points):
+        fft = self.kernel.fft()
