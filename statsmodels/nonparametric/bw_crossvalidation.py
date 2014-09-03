@@ -1,13 +1,38 @@
 import numpy as np
 from ..compat.python import range, zip
-from scipy import optimize, integrate
+from scipy import optimize, integrate, interpolate
 
-class LeaveOneOut(object):
-    def __init__(self, *data, **kwords):
+class LeaveOut(object):
+    """
+    Object that returns the arrays, leaving parts out.
+
+    The object can be iterated on and return a tuples whose first element is the index(es) of the element(s) left out, 
+    and the second element is a tuple of same size of `data` with what is to be used for the arrays.
+
+    If no parameter is specified beside the data, then an exhaustive leave-one-out is performed.
+
+    Parameters
+    ----------
+    exog: ndarray
+        Data used to fit
+    *data: tuple
+        Other arrays or values to select for. If the value doesn't have the same length as exog, then it will be sent 
+        as-is all the times. Otherwise, it will be selected like exog.
+
+    Optional Parameters
+    -------------------
+    sampling: int
+        Instead of an exhaustive leave-one-out, a random sub-sample is iterated over
+    folding: int
+        The exogeneous dataset is split into k groups of same length. For each iteration, (k-1) groups are used for 
+        fitting and the last one is used for testing.
+    """
+    def __init__(self, exog, *data, **kwords):
         sampling = kwords.get('sampling', None)
+        data = (exog,) + data
         self.data = data
-        self.is_sel = [d.ndim > 0 for d in data]
-        self.n = data[0].shape[0]
+        self.is_sel = [d.shape[0] == exog.shape[0] for d in data]
+        self.n = exog.shape[0]
         n = self.n
         if sampling is not None and sampling > n:
             sampling = None
@@ -33,7 +58,7 @@ class LeaveOneOut(object):
         else:
             for k in self.ks:
                 sel[k] = False
-                yield (k,) + tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data))
+                yield (k, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
                 sel[k] = True
 
 def integrate_grid(values, grid=None, dv=None):
@@ -83,7 +108,7 @@ class ContinuousIMSE(object):
         LOO_est = LOO_model.fit()
         min_bw = np.min(test_est.bandwidth)*1e-9
 
-        self.LOO = LeaveOneOut(test_est.exog, test_est.weights, test_est.adjust, sampling=max_sampling)
+        self.LOO = LeaveOut(test_est.exog, test_est.weights, test_est.adjust, sampling=max_sampling)
         self.bw_min = test_est.bandwidth * 1e-3
         self.test_est = test_est
         self.LOO_est = LOO_est
@@ -140,7 +165,7 @@ class leastsquare_cv_bandwidth(object):
 
     def __init__(self, imse = None, imse_args = {}):
         if imse is None:
-            self.imse = ContinuousIMSE
+            self.imse = ContinuousIMSELOO
         else:
             self.imse = imse
         self.imse_args = imse_args
