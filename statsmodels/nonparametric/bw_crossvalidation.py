@@ -2,6 +2,7 @@ from __future__ import print_function, absolute_import, division
 import numpy as np
 from ..compat.python import range, zip
 from scipy import optimize, integrate, interpolate
+from .kde_utils import Grid
 
 class LeaveOneOut(object):
     """
@@ -170,27 +171,32 @@ def leave_some_out(exog, *data, **kwords):
     return LeaveOneOut(data, is_sel, npts)
 
 
-def integrate_grid(values, grid=None, dv=None):
-    if grid.ndim == 1:
+def integrate_grid(values, grid, dv=None):
+    values = np.asarray(values)
+    ndim = values.ndim
+    if ndim == 1:
         return integrate.trapz(values, grid)
     if grid is not None:
-        n = grid.shape[-1]
-        size_dp = tuple(d-1 for d in grid.shape[:n])
+        gp = Grid(grid)
+        if gp.ndim != ndim:
+            raise ValueError("Error, the grid doesn't have the same dimensions as the values")
+        grid = gp.full('F')
+        size_dp = tuple(d-1 for d in grid.shape[:ndim])
         dp = np.ones(size_dp, dtype=float)
-        for i in range(n):
+        for i in range(ndim):
             left = (np.s_[:-1],) * i
-            right = (np.s_[:-1],) * (n-i-1) + (i,)
+            right = (np.s_[:-1],) * (ndim-i-1) + (i,)
             upper = (np.s_[1:],)
             lower = (np.s_[:-1],)
             dp *= (grid[left + upper + right] - grid[left + lower + right])
-        n1 = n-1
-        var = [[0,1]] * n
-        starts = np.array(np.meshgrid(*var)).T.reshape(2**n, n)
+        n1 = ndim-1
+        var = [[0,1]] * ndim
+        starts = np.array(np.meshgrid(*var)).T.reshape(2**ndim, ndim)
         S = 0
         for start in starts:
             sel = tuple(np.s_[s:s+sd] for s, sd in zip(start, size_dp))
             S += np.sum(values[sel]*dp)
-        S /= 2**n
+        S /= 2**ndim
         return S
     if dv is None:
         dv = 1
@@ -198,7 +204,7 @@ def integrate_grid(values, grid=None, dv=None):
 
 def grid_interpolate(xs, ys, xp):
     """
-    Linearly interpolate values on a grid
+    Interpolate values on a grid
 
     Parameters
     ----------
@@ -214,11 +220,23 @@ def grid_interpolate(xs, ys, xp):
     ndarray
         Values interpolated on the points xp
     """
-    if xs.ndim > 1:
-        xs = xs.squeeze()
-    if xs.ndim == 1:
+    gp = Grid(xs)
+    if gp.ndim == 1:
         return np.interp(xp, xs, ys)
-    xs = xs.view()
+    elif gp.ndim == 2:
+        xs = [x.squeeze() for x in gp.sparse()]
+        xmin = xs[0].min()
+        xmax = xs[0].max()
+        ymin = xs[1].min()
+        ymax = xs[1].max()
+        xp = xp.copy()
+        xp[xp[:,0] < xmin, 0] = xmin
+        xp[xp[:,0] > xmax, 0] = xmax
+        xp[xp[:,1] < ymin, 0] = ymin
+        xp[xp[:,1] > ymax, 0] = ymax
+        interp = np.frompyfunc(interpolate.interp2d(xs[0], xs[1], ys, copy=False), 2, 1)
+        return interp(xp[:,0], xp[:,1])
+    xs = gp.full('F').view()
     xs.shape = (np.prod(xs.shape[:-1]), xs.shape[-1])
     ys = ys.view()
     ys.shape = xs.shape[:-1]
@@ -268,7 +286,7 @@ class ContinuousIMSE(object):
         for i, (Xi, Wi, Li) in self.LOO:
             LOO_est.update_inputs(Xi, Wi, Li)
             if use_grid:
-                xs, gr = LOO_est.grid()
+                xs, gr = LOO_est.grid(N=self.grid_size)
                 vals = grid_interpolate(xs, gr, exog[i])
             else:
                 vals = LOO_est.pdf(exog[i])

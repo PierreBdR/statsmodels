@@ -7,7 +7,7 @@ This module contains a set of methods to compute multivariates KDEs.
 import numpy as np
 from scipy import linalg
 from statsmodels.compat.python import range
-from .kde_utils import numpy_trans_method, atleast_2df
+from .kde_utils import numpy_trans_method, atleast_2df, Grid
 from numpy import newaxis
 from . import kde1d_methods
 from copy import copy as shallow_copy
@@ -22,7 +22,7 @@ def generate_grid(kde, N=None, cut=None):
     ----------
     kde: KDE1DMethod
         Fitted KDE object
-    N: int
+    N: int or list of int
         Number of points in the grid
     cut: float
         For unbounded domains, how far past the maximum should
@@ -32,7 +32,11 @@ def generate_grid(kde, N=None, cut=None):
     -------
     A vector of N regularly spaced points
     """
-    N = kde.grid_size(N)
+    N = np.asarray(kde.grid_size(N), dtype=int)
+    if N.ndim == 0:
+        N = N * np.ones(kde.ndim, dtype=int)
+    elif N.ndim != 1 or N.shape[0] != kde.ndim:
+        raise ValueError("N must be a single integer, or a 1D array with as many element as dimensions in the KDE")
     if cut is None:
         cut = kde.kernel.cut
     if kde.bandwidth.ndim == 0:
@@ -49,7 +53,7 @@ def generate_grid(kde, N=None, cut=None):
             lower[i] = np.min(kde.exog[:,i]) - cut[i]
         if upper[i] == np.inf:
             upper[i] = np.max(kde.exog[:,i]) + cut[i]
-    xi = tuple(s_[lower[i] : upper[i] : N*1j] for i in range(ndim))
+    xi = tuple(s_[lower[i] : upper[i] : N[i]*1j] for i in range(ndim))
     gr = np.mgrid[xi]
     return np.concatenate([g[...,None] for g in gr], axis=-1)
 
@@ -73,7 +77,7 @@ def _compute_bandwidth(kde):
         return None, cov
     return None, None
 
-def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
+def fftdensity(exog, kernel_fft, bw_inv, lower, upper, N, weights, total_weights):
     """
     Compute the density estimate using a FFT approximation.
 
@@ -87,8 +91,8 @@ def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
         Lower bound on which to compute the density
     upper: float
         Upper bound on which to compute the density
-    N: int
-        Number of buckets to compute
+    N: int or list of int
+        Number of buckets to compute, for each dimension
     weights: ndarray or None
         Weights of the data, or None if they all have the same weight.
     total_weights: float
@@ -110,22 +114,28 @@ def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfftn(DataHist)
     ndim = exog.shape[1]
+    mesh = Grid(mesh)
 
-    t_star = (2 * bw / R)
+    dx = np.asarray(mesh.interval())
+    if bw_inv.ndim == 2:
+        dx = dot(dx, bw_inv)
+    else:
+        dx *= bw_inv
+
     fs = []
     for i in range(ndim-1):
-        l = (FFTData.shape[0]-1)//2 + 1
-        fmax = l*np.pi*t_star[i]
-        fs.append(np.concatenate([np.linspace(0, fmax, l),
-                                  np.linspace(-fmax, 0, l-1, endpoint=False)]))
-    fmax = FFTData.shape[-1]*np.pi*t_star[-1]
-    fs.append(np.linspace(0, fmax, FFTData.shape[-1]))
-    gp = np.meshgrid(fs)
-    fmax, smth = kernel_fft(gp)
+        n = FFTData.shape[i]
+        fs.append(np.fft.fftfreq(n, dx[i]))
+    l = FFTData.shape[-1]
+    t_star = 0.5 / (l*dx[-1])
+    fs.append(np.arange(l) * t_star)
+    gp = np.meshgrid(*fs, indexing='ij')
+    smth = kernel_fft(gp)
 
     SmoothFFTData = FFTData * smth
-    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
-    return mesh, density
+    volume = np.prod(mesh.interval())
+    density = np.fft.irfftn(SmoothFFTData, DataHist.shape) / volume
+    return mesh.grid, density
 
 
 class KDEnDMethod(object):
@@ -531,6 +541,14 @@ class KDEnDMethod(object):
         return self.pdf(points, out)
 
     def grid(self, N=None, cut=None):
+        """
+        Compute the PDF on a grid.
+
+        Parameters
+        ----------
+        N: int or list of int
+            Number of elements on the grid, per dimension
+        """
         gr = generate_grid(self, N, cut)
         return gr, self.pdf(gr)
 
@@ -550,27 +568,29 @@ class KDEnDMethod(object):
             return 2**p2
         return N
 
-def Cyclic(KDEnDMethod):
+class Cyclic(KDEnDMethod):
     def fit(self, kde, compute_bandwidth = True):
         if kde.ndim == 1:
             cyc = kde1d_methods.Cyclic()
             return cyc.fit(kde, compute_bandwidth)
-        super(Cyclic, self).fit(self, kde, compute_bandwidth)
+        return super(Cyclic, self).fit(kde, compute_bandwidth)
 
-    def pdf(self, points):
+    @numpy_trans_method('ndim', 1)
+    def pdf(self, points, out):
         for i in range(self.ndim):
             if self.bounded(i) and not self.closed(i):
                 raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
         if not self.bounded():
-            return super(KDEnDMethod, self).pdf(points)
+            return super(Cyclic, self).pdf(points, out)
+        raise NotImplemented
 
-    def grid(self, points):
+    def grid(self, N=None, cut=None):
         if self.adjust.shape:
             return KDEnDMethod.grid(self, N, cut)
         for i in range(self.ndim):
             if self.bounded(i) and not self.closed(i):
                 raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
-        bw = self.bandwidth * self.adjust
+        bw_inv = self.inv_bandwidth / self.adjust
         exog = self.exog
         N = self.grid_size(N)
 
@@ -578,13 +598,13 @@ def Cyclic(KDEnDMethod):
         upper = self.upper
 
         if cut is None:
-            cut = kde.kernel.cut
-        if kde.bandwidth.ndim == 0:
-            cut = kde.bandwidth * cut * np.ones(kde.ndim, dtype=float)
-        elif kde.bandwidth.ndim == 1:
-            cut = kde.bandwidth * cut
+            cut = self.kernel.cut
+        if self.bandwidth.ndim == 0:
+            cut = self.bandwidth * cut * np.ones(self.ndim, dtype=float)
+        elif self.bandwidth.ndim == 1:
+            cut = self.bandwidth * cut
         else:
-            cut = np.dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
+            cut = np.dot(self.bandwidth, cut * np.ones(self.ndim, dtype=float))
 
         for d in range(self.ndim):
             if upper[d] == np.inf:
@@ -597,4 +617,4 @@ def Cyclic(KDEnDMethod):
         if not weights.shape:
             weights = None
 
-        return fftdensity(exog, self.kernel.fft, bw, lower, upper, N, weights, self.total_weights)
+        return fftdensity(exog, self.kernel.fft, bw_inv, lower, upper, N, weights, self.total_weights)

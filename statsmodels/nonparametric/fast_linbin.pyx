@@ -16,7 +16,7 @@ ctypedef np.int_t INT
 @cython.wraparound(False)
 @cython.cdivision(True)
 @cython.embedsignature(True)
-def fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUBLE] weights = None, int cyclic=0):
+def _fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUBLE] weights = None, int cyclic=0):
     r"""
     Linear Binning as described in Fan and Marron (1994)
 
@@ -62,9 +62,6 @@ def fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUB
         int N
         int has_weight = weights is not None
 
-    if has_weight:
-        assert weights.shape[0] == X.shape[0], "Error, the weights must be None or an array of same size as X"
-
     if cyclic:
         shift = -a
         lower = 0
@@ -104,6 +101,18 @@ def fast_linbin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUB
         mesh = np.linspace(a+delta/2, b-delta/2, M)
 
     return gcnts, mesh
+
+def fast_linbin(object X, double a, double b, int M, object weights = None, int cyclic=0):
+    cdef:
+        np.ndarray[DOUBLE] mX
+    mX = np.atleast_1d(X).astype(float)
+    if mX.ndim != 1:
+        raise ValueError("Error, X must be a 1D array")
+    if weights is not None:
+        weights = np.asarray(weights, dtype=float)
+        if weights.ndim != 1 or weights.shape[0] != mX.shape[0]:
+            raise ValueError("Weights must be None or an array of the same shape as X")
+    return _fast_linbin(mX, a, b, M, weights, cyclic)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -345,7 +354,7 @@ def fast_linbin_nd(object X, object a, object b, object M, object weights = None
     else:
         mesh = [ np.linspace(na[i]+delta[i]/2, nb[i]-delta[i]/2, nM[i]) for i in range(D) ]
 
-    return result.reshape(tuple(nM)), mesh
+    return result.reshape(tuple(nM)), np.meshgrid(*mesh, sparse=True, indexing='ij')
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -427,7 +436,7 @@ def _fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a, np.ndarray[
             gcnts[pos] += w
 
     mesh = [ np.linspace(a[i]+delta[i]/2, b[i]-delta[i]/2, M[i]) for i in range(D) ]
-    return gcnts.reshape(tuple(M)), mesh
+    return gcnts.reshape(tuple(M)), np.meshgrid(*mesh, sparse=True, indexing='ij')
 
 @cython.embedsignature(True)
 @cython.profile(True)
