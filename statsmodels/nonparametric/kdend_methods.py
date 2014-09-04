@@ -11,6 +11,8 @@ from .kde_utils import numpy_trans_method, atleast_2df
 from numpy import newaxis
 from . import kde1d_methods
 from copy import copy as shallow_copy
+from numpy import s_
+from .fast_linbin import fast_bin_nd as fast_bin_nd
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -47,7 +49,7 @@ def generate_grid(kde, N=None, cut=None):
             lower[i] = np.min(kde.exog[:,i]) - cut[i]
         if upper[i] == np.inf:
             upper[i] = np.max(kde.exog[:,i]) + cut[i]
-    xi = tuple(np.s_[lower[i] : upper[i] : N*1j] for i in range(ndim))
+    xi = tuple(s_[lower[i] : upper[i] : N*1j] for i in range(ndim))
     gr = np.mgrid[xi]
     return np.concatenate([g[...,None] for g in gr], axis=-1)
 
@@ -70,6 +72,61 @@ def _compute_bandwidth(kde):
             cov = kde.covariance
         return None, cov
     return None, None
+
+def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
+    """
+    Compute the density estimate using a FFT approximation.
+
+    Parameters
+    ----------
+    exog: ndarray
+        2D array with the data to fit
+    kernel_fft: function
+        Function computing the FFT for the kernel
+    lower: float
+        Lower bound on which to compute the density
+    upper: float
+        Upper bound on which to compute the density
+    N: int
+        Number of buckets to compute
+    weights: ndarray or None
+        Weights of the data, or None if they all have the same weight.
+    total_weights: float
+        Sum of the weights, or len(exog) if weights is None
+
+    Returns
+    -------
+    mesh: ndarray
+        Points on which the density had been evaluated
+    density: ndarray
+        Density evaluated on the mesh
+
+    Notes
+    -----
+    No checks are made to ensure the consistency of the input!
+    """
+    R = upper - lower
+    DataHist, mesh = fast_bin_nd(exog, lower, upper, N, weights=weights, cyclic=True)
+    DataHist = DataHist / total_weights
+    FFTData = np.fft.rfftn(DataHist)
+    ndim = exog.shape[1]
+
+    t_star = (2 * bw / R)
+    fs = []
+    for i in range(ndim-1):
+        l = (FFTData.shape[0]-1)//2 + 1
+        fmax = l*np.pi*t_star[i]
+        fs.append(np.concatenate([np.linspace(0, fmax, l),
+                                  np.linspace(-fmax, 0, l-1, endpoint=False)]))
+    fmax = FFTData.shape[-1]*np.pi*t_star[-1]
+    fs.append(np.linspace(0, fmax, FFTData.shape[-1]))
+    gp = np.meshgrid(fs)
+    fmax, smth = kernel_fft(gp)
+
+    SmoothFFTData = FFTData * smth
+    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
+    return mesh, density
+
 
 class KDEnDMethod(object):
     """
@@ -264,6 +321,24 @@ class KDEnDMethod(object):
             raise ValueError("Error, specified covariance has more than 2 dimension")
         self.bandwidth = bw
         self._cov = cov
+
+    def update_inputs(self, exog, weights=1., adjust=1.):
+        exog = atleast_2df(exog)
+        if exog.ndim != 2:
+            raise ValueError("Error, exog must be at most a 2D array")
+        weights = np.asarray(weights)
+        adjust = np.asarray(adjust)
+        if weights.ndim != 0 and weights.shape != (exog.shape[0],):
+            raise ValueError("Error, weights must be either a single number, or a 1D array with the same length as exog")
+        if adjust.ndim != 0 and adjust.shape != (exog.shape[0],):
+            raise ValueError("Error, adjust must be either a single number, or a 1D array with the same length as exog")
+        self._exog = exog
+        self._weights = weights
+        self._adjust = adjust
+        if weights.ndim > 0:
+            self._total_weights = weights.sum()
+        else:
+            self._total_weights = self.npts
 
     @property
     def exog(self):
@@ -490,4 +565,36 @@ def Cyclic(KDEnDMethod):
             return super(KDEnDMethod, self).pdf(points)
 
     def grid(self, points):
-        fft = self.kernel.fft()
+        if self.adjust.shape:
+            return KDEnDMethod.grid(self, N, cut)
+        for i in range(self.ndim):
+            if self.bounded(i) and not self.closed(i):
+                raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
+        bw = self.bandwidth * self.adjust
+        exog = self.exog
+        N = self.grid_size(N)
+
+        lower = self.lower
+        upper = self.upper
+
+        if cut is None:
+            cut = kde.kernel.cut
+        if kde.bandwidth.ndim == 0:
+            cut = kde.bandwidth * cut * np.ones(kde.ndim, dtype=float)
+        elif kde.bandwidth.ndim == 1:
+            cut = kde.bandwidth * cut
+        else:
+            cut = np.dot(kde.bandwidth, cut * np.ones(kde.ndim, dtype=float))
+
+        for d in range(self.ndim):
+            if upper[d] == np.inf:
+                if cut is None:
+                    cut = self.kernel.cut
+                lower[d] = np.min(exog[:,d]) - cut[d]
+                upper[d] = np.max(exog[:,d]) + cut[d]
+
+        weights = self.weights
+        if not weights.shape:
+            weights = None
+
+        return fftdensity(exog, self.kernel.fft, bw, lower, upper, N, weights, self.total_weights)

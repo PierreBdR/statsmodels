@@ -224,6 +224,27 @@ class KDE1DMethod(object):
         self._cov = val
         self._bw = np.sqrt(val)
 
+    def update_inputs(self, exog, weights=1., adjust=1.):
+        """
+        Update all the variable lengths inputs at once to ensure consistency
+        """
+        exog = np.atleast_1d(exog)
+        if exog.ndim != 1:
+            raise ValueError("Error, exog must be a 1D array (nb dimensions: {})".format(exog.ndim))
+        weights = np.asarray(weights)
+        adjust = np.asarray(adjust)
+        if weights.ndim != 0 and weights.shape != exog.shape:
+            raise ValueError("Error, weights must be either a single number, or an array the same shape as exog")
+        if adjust.ndim != 0 and adjust.shape != exog.shape:
+            raise ValueError("Error, adjust must be either a single number, or an array the same shape as exog")
+        self._exog = exog
+        self._weights = weights
+        self._adjust = adjust
+        if weights.ndim > 0:
+            self._total_weights = weights.sum()
+        else:
+            self._total_weights = self.npts
+
     @property
     def exog(self):
         """
