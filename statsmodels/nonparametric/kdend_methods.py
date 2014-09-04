@@ -12,7 +12,7 @@ from numpy import newaxis
 from . import kde1d_methods
 from copy import copy as shallow_copy
 from numpy import s_
-from .fast_linbin import fast_bin_nd as fast_bin_nd
+from .fast_linbin import fast_linbin_nd as fast_bin_nd
 
 def generate_grid(kde, N=None, cut=None):
     r"""

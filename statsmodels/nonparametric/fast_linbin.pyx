@@ -7,6 +7,7 @@ cimport cython
 cimport numpy as np
 import numpy as np
 from libc.math cimport floor
+from cpython.mem cimport PyMem_Malloc, PyMem_Realloc, PyMem_Free
 
 ctypedef np.float64_t DOUBLE
 ctypedef np.int_t INT
@@ -177,22 +178,26 @@ def fast_bin(np.ndarray[DOUBLE] X, double a, double b, int M, np.ndarray[DOUBLE]
     return gcnts, mesh
 
 
-DEF MAX_DIM = 20
+# Note: this define is NOT the limiting factor in the algorithm. See the code for details.
+# Ideally, this constant should be the number of bits in Py_ssize_t
+DEF MAX_DIM = 64
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
 @cython.profile(True)
-def _fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a, np.ndarray[DOUBLE] b,
-                    np.ndarray[INT] M, np.ndarray[DOUBLE] weights, int has_weight, int cyclic=0):
+def _fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X,
+                    np.ndarray[DOUBLE] a, np.ndarray[DOUBLE] b,
+                    np.ndarray[INT] M,
+                    np.ndarray[DOUBLE] weights,
+                    int has_weight, int cyclic,
+                    np.ndarray[DOUBLE] gcnts, np.ndarray[DOUBLE] delta):
     cdef:
         Py_ssize_t D = a.shape[0]
         np.npy_intp nD = D
-        Py_ssize_t i, d, c
+        Py_ssize_t i, d, c, N
         int nobs = X.shape[0]
-        np.ndarray gcnts = np.zeros(np.prod(M), np.float)
         object mesh
-        double delta[MAX_DIM]
         double shift[MAX_DIM]
         double rem[MAX_DIM]
         double val[MAX_DIM]
@@ -201,14 +206,10 @@ def _fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a, np.ndarr
         double w
         int base_idx[MAX_DIM]
         int next_idx[MAX_DIM]
-        int N
         int is_in
         Py_ssize_t nb_corner = 1 << D
         double wc
         Py_ssize_t pos
-
-    if D > MAX_DIM:
-        raise ValueError("Sorry, this method works up to " + str(D) + " dimensions")
 
     for d in range(D):
         delta[d] = (b[d] - a[d]) / M[d]
@@ -251,6 +252,10 @@ def _fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a, np.ndarr
                 else:
                     next_idx[d] = base_idx[d]+1
 
+            # This uses the binary representation of the corner id (from 0 to 2**d-1) to identify where it is
+            # for each bit: 0 means lower index, 1 means upper index
+            # This means we are limited by the number of bits in Py_ssize_t. But also that we couldn't possibly allocate 
+            # an array too big for this to work.
             for c in range(nb_corner):
                 wc = w
                 pos = 0
@@ -265,18 +270,10 @@ def _fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a, np.ndarr
                     c >>= 1
                 gcnts[pos] += wc
 
-    if cyclic:
-        mesh = [np.linspace(a[i], b[i]-delta[i], M[i]) for i in range(D)]
-    else:
-        mesh = [ np.linspace(a[i]+delta[i]/2, b[i]-delta[i]/2, M[i]) for i in range(D) ]
-
-    return gcnts.reshape(tuple(M)), mesh
-
 
 @cython.embedsignature(True)
 @cython.profile(True)
-def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a,
-                   np.ndarray[DOUBLE] b, object M, object weights = None, int cyclic=0):
+def fast_linbin_nd(object X, object a, object b, object M, object weights = None, int cyclic=0):
     r"""
     Linear Binning as described in Fan and Marron (1994)
 
@@ -309,24 +306,46 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X, np.ndarray[DOUBLE] a,
         Py_ssize_t D
         int has_weight = weights is not None
         int n
-    M = np.asarray(M).astype(int)
-    if X.ndim != 2:
-        raise ValueError("Error, X must be a 2D array")
-    D = X.shape[1]
-    n = X.shape[0]
-    if M.ndim == 0:
-        M = M*np.ones((D,), dtype=int)
-    if (a.ndim != 1 or a.shape[0] != D or
-        b.ndim != 1 or b.shape[0] != D or
-        M.ndim != 1 or M.shape[0] != D):
+        np.ndarray[DOUBLE] result
+        np.ndarray[DOUBLE] delta
+        np.ndarray[DOUBLE, ndim=2] nX
+        np.ndarray[DOUBLE] na, nb
+        np.ndarray nM
+    nM = np.asarray(M).astype(int)
+    nX = np.atleast_2d(X).astype(np.float)
+    na = np.atleast_1d(a).astype(np.float)
+    nb = np.atleast_1d(b).astype(np.float)
+
+    max_d = min(MAX_DIM, 8*sizeof(Py_ssize_t))
+    D = nX.shape[1]
+    if D > max_d:
+        raise ValueError("Error, you cannot have more than {0} dimensions, and you have {1}".format(max_d, D))
+
+    n = nX.shape[0]
+    if nM.ndim == 0:
+        nM = nM*np.ones((D,), dtype=int)
+    if np.any(nM<2):
+        raise ValueError("You need to specify at least 2 elements per dimension")
+    if (na.ndim != 1 or na.shape[0] != D or
+        nb.ndim != 1 or nb.shape[0] != D or
+        nM.ndim != 1 or nM.shape[0] != D):
         raise ValueError("Error, incompatible dimensions for a, b, M and X")
     if has_weight:
         weights = np.asarray(weights).astype(float)
         if weights.shape != (n,):
-            raise ValueError("weights must be None or an array of same length as X")
+            raise ValueError("weights must be None or a 1D array of same length as X")
     if not has_weight:
         weight = np.empty(())
-    return _fast_linbin_nd(X, a, b, M, weights, has_weight, cyclic)
+    result = np.zeros(np.prod(nM), dtype=np.float)
+    delta = np.zeros((D,), dtype=np.float)
+    _fast_linbin_nd(nX, na, nb, nM, weights, has_weight, cyclic, result, delta)
+
+    if cyclic:
+        mesh = [np.linspace(na[i], nb[i]-delta[i], nM[i]) for i in range(D)]
+    else:
+        mesh = [ np.linspace(na[i]+delta[i]/2, nb[i]-delta[i]/2, nM[i]) for i in range(D) ]
+
+    return result.reshape(tuple(nM)), mesh
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
