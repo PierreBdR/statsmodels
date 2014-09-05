@@ -6,13 +6,9 @@ Module contained a variety of small useful functions.
 
 from __future__ import division, print_function, absolute_import
 from ..compat.python import string_types
-from collections import OrderedDict
-from keyword import iskeyword as _iskeyword
-from operator import itemgetter as _itemgetter
-import sys
-from ..compat.python import string_types
 import numpy as np
 import inspect
+from .namedtuple import namedtuple
 
 # Find the largest float available for this numpy
 if hasattr(np, 'float128'):
@@ -24,6 +20,7 @@ else:
 
 def finite(val):
     return val is not None and np.isfinite(val)
+
 
 def atleast_2df(*arys):
     """
@@ -59,13 +56,13 @@ def make_ufunc(nin = None, nout=1):
         return np.frompyfunc(fct, Nin, nout)
     return f
 
-def _process_trans_args(z, out, input_dim, output_dim, dtype):
+def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
     """
     This function is the heart of the numpy_trans* functions.
     """
     z = np.asarray(z)
-    if dtype is not None:
-        z = z.astype(dtype)
+    if in_dtype is not None:
+        z = z.astype(in_dtype)
     input_shape = z.shape
     need_transpose = False
     # Compute data shape (i.e. input without the dimension)
@@ -101,11 +98,11 @@ def _process_trans_args(z, out, input_dim, output_dim, dtype):
                 output_shape = data_shape + (output_dim,)
         else:
             output_shape = data_shape
-        if dtype is None:
-            dtype = z.dtype
-            if issubclass(dtype.type, np.integer):
-                dtype = np.float64
-        out = np.empty(output_shape, dtype=dtype)
+        if out_dtype is None:
+            out_dtype = z.dtype
+            if issubclass(out_dtype.type, np.integer):
+                out_dtype = np.float64
+        out = np.empty(output_shape, dtype=out_dtype)
         write_out = out.view()
         if z_empty and output_dim == 1:
             out.shape = ()
@@ -131,7 +128,7 @@ def _process_trans_args(z, out, input_dim, output_dim, dtype):
         z = z.T
     return z, write_out, out
 
-def numpy_trans(input_dim, output_dim, dtype=None):
+def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=None):
     """
     Decorator to create a function taking a single array-like argument and return a numpy array with the same number of 
     points.
@@ -152,27 +149,34 @@ def numpy_trans(input_dim, output_dim, dtype=None):
         Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or 
         less.
 
-    dtype: dtype or None
-        Expected types of the arrays. The input array is converted to this type. If set to None, the input array is left 
-        untouched.
+    out_dtype: dtype or None
+        Expected types of the output array.
         If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
+
+    in_dtype: dtype or None
+        If not None, the input array will be converted to this type before being passed on.
 
     Notes
     -----
     If input_dim is not 0, the function will always receive a 2D array with the second index for the dimension.
     """
+    if out_dtype is not None:
+        out_dtype = np.dtype(out_dtype)
+    if in_dtype is not None:
+        in_dtype = np.dtype(in_dtype)
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
     def decorator(fct):
         def f(z, out=None):
-            z, write_out, out = _process_trans_args(z, out, input_dim, output_dim, dtype)
+            z, write_out, out = _process_trans_args(z, out, input_dim, output_dim,
+                                                    in_dtype, out_dtype)
             fct(z, out=write_out)
             return out
         return f
     return decorator
 
-def numpy_trans1d(fct):
+def numpy_trans1d(out_dtype=None, in_dtype=None):
     """
     This decorator helps provide a uniform interface to 1D numpy transformation functions.
 
@@ -186,33 +190,44 @@ def numpy_trans1d(fct):
     The following example illustrate how a 2D array will be passed as 1D, and the output allocated as the input 
     argument:
 
-    >>> @numpy_trans1d
+    >>> @numpy_trans1d()
     ... def broadsum(z, out):
     ...   out[:] = np.sum(z, axis=0)
     >>> broadsum([[1,2],[3,4]])
     array([[ 10.,  10.], [ 10.,  10.]])
 
     """
-    def f(z, out=None):
-        z = np.asarray(z)
-        if out is None:
-            dtype = z.dtype
-            if issubclass(dtype.type, np.integer):
-                dtype = np.float64
-            out = np.empty(z.shape, dtype=dtype)
-        size_data = np.prod(z.shape)
-        if size_data == 0:
-            size_data = 1
-        z = z.view()
-        z.shape = (size_data,)
-        write_out = out.view()
-        write_out.shape = (size_data,)
-        fct(z, write_out)
-        return out
-    return f
+    if out_dtype is not None:
+        out_dtype = np.dtype(out_dtype)
+    if in_dtype is not None:
+        in_dtype = np.dtype(in_dtype)
+    def decorator(fct):
+        def f(z, out=None):
+            z = np.asarray(z)
+            if in_dtype is not None:
+                z = z.astype(in_dtype)
+            if out is None:
+                if out_dtype is None:
+                    dtype = z.dtype
+                else:
+                    dtype = out_dtype
+                if issubclass(dtype.type, np.integer):
+                    dtype = np.float64
+                out = np.empty(z.shape, dtype=dtype)
+            size_data = np.prod(z.shape)
+            if size_data == 0:
+                size_data = 1
+            z = z.view()
+            z.shape = (size_data,)
+            write_out = out.view()
+            write_out.shape = (size_data,)
+            fct(z, write_out)
+            return out
+        return f
+    return decorator
 
 
-def numpy_trans_method(input_dim, output_dim, dtype=None):
+def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
     """
     Decorator to create a method taking a single array-like argument and return a numpy array with the same number of 
     points.
@@ -235,11 +250,13 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
         less.
         If a string, it should be the name of an attribute containing the output dimension
 
-    dtype: dtype or None
-        Expected types of the arrays. The input array is converted to this type. If set to None, the input array is left 
-        untouched.
+    out_dtype: dtype or None
+        Expected types of the output array.
         If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
+
+    in_dtype: dtype or None
+        If not None, the input array will be converted to this type before being passed on.
 
     Notes
     -----
@@ -261,159 +278,169 @@ def numpy_trans_method(input_dim, output_dim, dtype=None):
     else:
         def get_output_dim(self):
             return output_dim
+    if out_dtype is not None:
+        out_dtype = np.dtype(out_dtype)
+    if in_dtype is not None:
+        in_dtype = np.dtype(in_dtype)
     # Decorator itself
     def decorator(fct):
         def f(self, z, out=None):
-            z, write_out, out = _process_trans_args(z, out, get_input_dim(self), get_output_dim(self), dtype)
+            z, write_out, out = _process_trans_args(z, out, get_input_dim(self), get_output_dim(self),
+                                                    in_dtype, out_dtype)
             fct(self, z, out=write_out)
             return out
         return f
     return decorator
 
-def numpy_trans1d_method(fct):
+def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     '''
     This is the method equivalent to :py:fun:`numpy_trans1d`
     '''
-    def f(self, z, out=None):
-        z = np.asarray(z)
-        if out is None:
-            dtype = z.dtype
-            if issubclass(dtype.type, np.integer):
-                dtype = np.float64
-            out = np.empty(z.shape, dtype=dtype)
-        size_data = np.prod(z.shape)
-        if size_data == 0:
-            size_data = 1
-        z = z.view()
-        z.shape = (size_data,)
-        write_out = out.view()
-        write_out.shape = (size_data,)
-        fct(self, z, write_out)
-        return out
-    return f
+    if out_dtype is not None:
+        out_dtype = np.dtype(out_dtype)
+    if in_dtype is not None:
+        in_dtype = np.dtype(in_dtype)
+    def decorator(fct):
+        def f(self, z, out=None):
+            z = np.asarray(z)
+            if in_dtype is not None:
+                z = z.astype(in_dtype)
+            if out is None:
+                if out_dtype is None:
+                    dtype = z.dtype
+                else:
+                    dtype = out_dtype
+                if issubclass(dtype.type, np.integer):
+                    dtype = np.float64
+                out = np.empty(z.shape, dtype=dtype)
+            size_data = np.prod(z.shape)
+            if size_data == 0:
+                size_data = 1
+            z = z.view()
+            z.shape = (size_data,)
+            write_out = out.view()
+            write_out.shape = (size_data,)
+            fct(self, z, write_out)
+            return out
+        return f
+    return decorator
 
-def namedtuple(typename, field_names, verbose=False, rename=False):
-    """Returns a new subclass of tuple with named fields.
+class Grid(object):
+    def __init__(self, grid):
+        """
+        Create a grid from a full or sparse grid as returned by meshgrid or a 1D grid.
+        """
+        self._ndim = None
+        self._order = None
+        self._shape = None
+        self._dim_index = None
+        try:
+            grid = np.asarray(grid, dtype=grid[0].dtype)
+            self._grid = grid
+            ndim = grid.ndim-1
+            self._ndim = ndim
+            if ndim == 0:
+                self._ndim = 1
+                self._order = ''
+                self._shape = grid.shape
+            elif grid.shape[-1] == ndim:
+                self._order = 'F'
+                self._shape = grid.shape[:-1]
+                self._dim_indx = -1
+            elif grid.shape[0] == ndim:
+                self._order = 'C'
+                self._shape = grid.shape[1:]
+                self._dim_index = 0
+            else:
+                raise ValueError("Error, this is not a valid grid")
+        except (AttributeError, ValueError): # This might be a sparse grid
+            ndim = len(grid)
+            shape = [None]*ndim
+            for i, m in enumerate(grid):
+                if m.ndim != ndim:
+                    raise ValueError("Error, this is not a valid (sparse) grid")
+                s = m.shape[i]
+                target_shape = (1,)*i + (s,) + (1,)*(ndim-i-1)
+                if m.shape != target_shape:
+                    raise ValueError("Error, this is not a valid (sparse) grid")
+                shape[i] = s
+            self._ndim = ndim
+            self._order = 'S'
+            self._shape = shape
+            self._dim_index = 0
+            self._grid = grid
 
-    >>> Point = namedtuple('Point', 'x y')
-    >>> Point.__doc__                   # docstring for the new class
-    'Point(x, y)'
-    >>> p = Point(11, y=22)             # instantiate with positional args or keywords
-    >>> p[0] + p[1]                     # indexable like a plain tuple
-    33
-    >>> x, y = p                        # unpack like a regular tuple
-    >>> x, y
-    (11, 22)
-    >>> p.x + p.y                       # fields also accessable by name
-    33
-    >>> d = p._asdict()                 # convert to a dictionary
-    >>> d['x']
-    11
-    >>> Point(**d)                      # convert from a dictionary
-    Point(x=11, y=22)
-    >>> p._replace(x=100)               # _replace() is like str.replace() but targets named fields
-    Point(x=100, y=22)
+    @property
+    def dim_index(self):
+        return self._dim_index
 
-    """
+    @property
+    def ndim(self):
+        return self._ndim
 
-    # Parse and validate the field names.  Validation serves two purposes,
-    # generating informative error messages and preventing template injection attacks.
-    if isinstance(field_names, string_types):
-        # names separated by whitespace and/or commas
-        field_names = field_names.replace(',', ' ').split()
-    field_names = tuple(map(str, field_names))
-    forbidden_fields = {'__init__', '__slots__', '__new__', '__repr__', '__getnewargs__'}
-    if rename:
-        names = list(field_names)
-        seen = set()
-        for i, name in enumerate(names):
-            need_suffix = (not all(c.isalnum() or c == '_' for c in name) or _iskeyword(name)
-                           or not name or name[0].isdigit() or name.startswith('_')
-                           or name in seen)
-            if need_suffix:
-                names[i] = '_%d' % i
-            seen.add(name)
-        field_names = tuple(names)
-    for name in (typename,) + field_names:
-        if not all(c.isalnum() or c == '_' for c in name):
-            raise ValueError('Type names and field names can only contain alphanumeric characters '
-                             'and underscores: %r' % name)
-        if _iskeyword(name):
-            raise ValueError('Type names and field names cannot be a keyword: %r' % name)
-        if name[0].isdigit():
-            raise ValueError('Type names and field names cannot start with a number: %r' % name)
-    seen_names = set()
-    for name in field_names:
-        if name.startswith('__'):
-            if name in forbidden_fields:
-                raise ValueError('Field names cannot be on of %s' % ', '.join(forbidden_fields))
-        elif name.startswith('_') and not rename:
-            raise ValueError('Field names cannot start with an underscore: %r' % name)
-        if name in seen_names:
-            raise ValueError('Encountered duplicate field name: %r' % name)
-        seen_names.add(name)
+    @property
+    def order(self):
+        return self._order
 
-    # Create and fill-in the class template
-    numfields = len(field_names)
-    argtxt = repr(field_names).replace("'", "")[1:-1]   # tuple repr without parens or quotes
-    reprtxt = ', '.join('%s=%%r' % name for name in field_names)
-    template = '''class %(typename)s(tuple):
-        '%(typename)s(%(argtxt)s)' \n
-        __slots__ = () \n
-        _fields = %(field_names)r \n
-        def __new__(_cls, %(argtxt)s):
-            'Create new instance of %(typename)s(%(argtxt)s)'
-            return _tuple.__new__(_cls, (%(argtxt)s)) \n
-        @classmethod
-        def _make(cls, iterable, new=tuple.__new__, len=len):
-            'Make a new %(typename)s object from a sequence or iterable'
-            result = new(cls, iterable)
-            if len(result) != %(numfields)d:
-                raise TypeError('Expected %(numfields)d arguments, got %%d' %% len(result))
-            return result \n
-        def __repr__(self):
-            'Return a nicely formatted representation string'
-            return '%(typename)s(%(reprtxt)s)' %% self \n
-        def _asdict(self):
-            'Return a new OrderedDict which maps field names to their values'
-            return OrderedDict(zip(self._fields, self)) \n
-        def _replace(_self, **kwds):
-            'Return a new %(typename)s object replacing specified fields with new values'
-            result = _self._make(map(kwds.pop, %(field_names)r, _self))
-            if kwds:
-                raise ValueError('Got unexpected field names: %%r' %% kwds.keys())
-            return result \n
-        def __getnewargs__(self):
-            'Return self as a plain tuple.  Used by copy and pickle.'
-            return tuple(self) \n\n''' % dict(numfields=numfields, field_names=field_names,
-                                              typename=typename, argtxt=argtxt, reprtxt=reprtxt)
-    for i, name in enumerate(field_names):
-        template += "        %s = _property(_itemgetter(%d), " \
-                    "doc='Alias for field number %d')\n" % (name, i, i)
-    if verbose:
-        print(template)
+    @property
+    def shape(self):
+        return self._shape
 
-    # Execute the template string in a temporary namespace and
-    # support tracing utilities by setting a value for frame.f_globals['__name__']
-    namespace = dict(_itemgetter=_itemgetter, __name__='namedtuple_%s' % typename,
-                     OrderedDict=OrderedDict, _property=property, _tuple=tuple)
-    try:
-        exec(template, namespace)
-    except SyntaxError as e:
-        raise SyntaxError(e.message + ':\n' + template)
-    result = namespace[typename]
+    @property
+    def grid(self):
+        return self._grid
 
-    # For pickling to work, the __module__ variable needs to be set to the frame
-    # where the named tuple is created.  Bypass this step in enviroments where
-    # sys._getframe is not defined (Jython for example) or sys._getframe is not
-    # defined for arguments greater than 0 (IronPython).
-    try:
-        result.__module__ = sys._getframe(1).f_globals.get('__name__', '__main__')
-    except (AttributeError, ValueError):
-        pass
+    def interval(self):
+        """
+        Compute the interval between dimensions of the grid.
+        """
+        dim_idx = self.dim_index
+        n = self.ndim
+        grid = self.sparse()
+        upper = [0] * n
+        lower = [0] * n
+        result = np.empty((n,), dtype=grid[0].dtype)
+        for i in range(n):
+            upper[i] = 1
+            result[i] = grid[i][tuple(upper)] - grid[i][tuple(lower)]
+            upper[i] = 0
+        return result
 
-    return result
+    def full(self, order=None):
+        if self.order == 'S':
+            m = np.meshgrid(*self._grid, indexing='ij')
+            if order is 'C':
+                return np.asarray(m)
+            return np.concatenate([g[...,None] for g in m], axis=-1)
+        if order is None or self.order == '' or order == self.order:
+            return self._grid
+        ndim = self.ndim
+        if order == 'C':
+            grid = self._grid
+            return np.asarray([grid[...,i] for i in range(ndim)])
+        return np.concatenate([grid[i,...,None] for i in range(ndim)])
 
+
+    def sparse(self):
+        order = self.order
+        if order == 'C' or order == 'F':
+            grid = self.grid
+            res = [None] * self.ndim
+            fst = np.s_[:1]
+            col = np.s_[:]
+            ndim = self.ndim
+            for i in range(ndim):
+                idx = (fst,)*i + (col,) + (fst,)*(ndim-i-1)
+                if order == 'C':
+                    idx = (i,) + idx
+                else:
+                    idx = idx + (i,)
+                res[i] = grid[idx]
+            return res
+        return self._grid
+
+    def __getitem__(self, idx):
+        return self._grid[idx]
 
 #
 from scipy import sqrt

@@ -11,12 +11,13 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .kde_utils import make_ufunc, numpy_trans_method, numpy_trans1d_method, finite
+from .kde_utils import (make_ufunc, numpy_trans_method, numpy_trans1d_method, finite, namedtuple,
+                        Grid)
 from . import _kernels
 from copy import copy as shallowcopy
+from statsmodels.compat.python import range, zip
 
 S2PI = np.sqrt(2 * np.pi)
-
 
 S2 = np.sqrt(2)
 
@@ -98,7 +99,7 @@ class Kernel1D(object):
         """
         return self.pdf(z, out=out)
 
-    @numpy_trans1d_method
+    @numpy_trans1d_method()
     def cdf(self, z, out):
         r"""
         Returns the cumulative density function on the points `z`, i.e.:
@@ -123,7 +124,7 @@ class Kernel1D(object):
             self.__comp_cdf = comp_cdf
         return comp_cdf(z, out=out)
 
-    @numpy_trans1d_method
+    @numpy_trans1d_method()
     def pm1(self, z, out):
         r"""
         Returns the first moment of the density function, i.e.:
@@ -149,7 +150,7 @@ class Kernel1D(object):
             self.__comp_pm1 = comp_pm1
         return comp_pm1(z, out=out)
 
-    @numpy_trans1d_method
+    @numpy_trans1d_method()
     def pm2(self, z, out):
         r"""
         Returns the second moment of the density function, i.e.:
@@ -180,11 +181,12 @@ class Kernel1D(object):
         FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        period = np.pi / (z[1] - z[0])
-        l = 2*len(z)-1
-        step = (2*period) / l
-        dz = np.linspace(-period+step/2, period-step/2, l, endpoint=True)
-        dz = np.roll(dz, len(z))
+        l = 2*(len(z)-1)
+        step = 1 / (l * (z[1]-z[0]))
+        n2 = l//2
+        start = -step * n2
+        dz = start + step * np.arange(l)
+        dz = np.roll(dz, n2)
         pdf = self.pdf(dz)
         pdf *= step
         if out is None:
@@ -196,11 +198,12 @@ class Kernel1D(object):
         """
         FFT of the function :math:`x k(x)`. The points are given as for the fft function.
         """
-        period = np.pi / (z[1] - z[0])
-        l = 2*len(z)-1
-        step = (2*period) / l
-        dz = np.linspace(-period+step/2, period-step/2, l, endpoint=True)
-        dz = np.roll(dz, len(z))
+        l = 2*(len(z)-1)
+        step = 1 / (l * (z[1]-z[0]))
+        n2 = l//2
+        start = -step * n2
+        dz = start + step * np.arange(l)
+        dz = np.roll(dz, n2)
         pdf = self.pdf(dz)
         pdf *= dz
         pdf *= step
@@ -214,15 +217,16 @@ class Kernel1D(object):
         DCT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        period = np.pi / (z[1] - z[0])
-        dz, step = np.linspace(0, period, len(z), endpoint=False, retstep=True)
+        l = len(z)
+        step = 1 / (2 * l * (z[1]-z[0]))
+        dz = step * np.arange(l)
         dz += step/2
         out = self.pdf(dz, out=out)
         out *= step
         out[...] = fftpack.dct(out, overwrite_x = True)
         return out
 
-    @numpy_trans1d_method
+    @numpy_trans1d_method()
     def _convolution(self, z, out):
         r"""
         Convolution kernel.
@@ -267,10 +271,10 @@ class Kernel1D(object):
     @property
     def convolution(self):
         if not hasattr(self, '_convolve_kernel'):
-            self._convolve_kernel = kernelFromPDF(self._convolution)
+            self._convolve_kernel = KernelfromPDF(self._convolution)
         return self._convolve_kernel
 
-    @numpy_trans1d_method
+    @numpy_trans1d_method()
     def convolution2(self, z, out):
         try:
             comp_conv = self.__comp_conv2
@@ -284,12 +288,12 @@ class Kernel1D(object):
             self.__comp_conv2 = comp_conv
         return comp_conv(z, out=out)
 
-def kernelFromPDF(name, _pdf):
-    def ConvolveKernel(Kernel1D):
-        def pdf(self, w, out=None):
-            return _pdf(z, out)
-        __call_ = pdf
-    return ConvolveKernel
+class KernelfromPDF(Kernel1D):
+    def __init__(self, pdf):
+        self._pdf = pdf
+    def pdf(self, w, out=None):
+        return self._pdf(z, out)
+    __call__ = pdf
 
 class normal_kernel1d(Kernel1D):
     """
@@ -345,11 +349,12 @@ class normal_kernel1d(Kernel1D):
         """
         z = np.asfarray(z)
         out = np.multiply(z, z, out)
-        out *= -0.5
+        out *= -2*np.pi**2
         np.exp(out, out)
         return out
 
-    def fft_xfx(self, z, out=None):
+    @numpy_trans1d_method(out_dtype=complex)
+    def fft_xfx(self, z, out):
         r"""
         The FFT of :math:`x\mathcal{N}(x)` which is:
 
@@ -357,25 +362,14 @@ class normal_kernel1d(Kernel1D):
 
             \text{FFT}(x \mathcal{N}(x)) = -e^{-\frac{\omega^2}{2}}\omega i
         """
-        z = np.asfarray(z)
-        if out is None:
-            out = np.empty(z.shape, dtype=complex)
         np.multiply(z, z, out)
-        out *= -0.5
+        out *= -2*np.pi**2
         np.exp(out, out)
-        out *= -z
-        out *= 1j
+        out *= z
+        out *= -2j*np.pi
         return out
 
-    def dct(self, z, out=None):
-        """
-        Returns the DCT of the normal distribution
-        """
-        z = np.asfarray(z)
-        out = np.multiply(z, z, out)
-        out *= -0.5
-        np.exp(out, out)
-        return out
+    dct = fft
 
     def cdf(self, z, out=None):
         r"""
@@ -506,7 +500,6 @@ class KernelnD(object):
 
     @numpy_trans_method('ndim', 1)
     def cdf(self, z, out):
-        z = np.asfarray(z)
         try:
             comp_cdf = self.__comp_cdf
         except AttributeError:
@@ -523,6 +516,36 @@ class KernelnD(object):
                 return integrate.nquad(pdf, [(lower, x) for x in xs])[0]
             self.__comp_cdf = comp_cdf
         return comp_cdf(*z, out=out)
+
+    def fft(self, z, out=None):
+        """
+        FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
+        frequency range to be explored.
+        """
+        grid = Grid(z)
+        l = np.array(grid.shape)
+        l[-1] = 2*(l[-1]-1)
+        step = 1 / (l * grid.interval())
+        grid_spec = []
+        for i in range(grid.ndim):
+            if l[i] % 2 == 1:
+                n2 = (l[i]-1)//2
+                start = -step[i] * (n2 - 0.5)
+                ls = start + step[i]*np.arange(l[i])
+                ls = np.roll(ls, n2 + 1)
+            else:
+                n2 = l[i]//2
+                start = -step[i] * n2
+                ls = start + step[i]*np.arange(l[i])
+                ls = np.roll(ls, n2)
+            grid_spec.append(ls)
+        dz = np.meshgrid(*grid_spec, indexing='ij')
+        pdf = self.pdf(dz)
+        pdf *= np.prod(step)
+        if out is None:
+            out = np.empty(props.shape, dtype=complex)
+        out[:] = np.fft.rfftn(pdf)
+        return out
 
 class normal_kernel(KernelnD):
     """
@@ -568,6 +591,15 @@ class normal_kernel(KernelnD):
         np.prod(tmp, axis=-1, out=out)
         out /= 2**self.ndim
         return out
+
+    @numpy_trans_method('ndim', 1)
+    def fft(self, fs, out=None):
+        np.sum(fs**2, axis=-1, out=out)
+        out *= -2*(np.pi**2)
+        np.exp(out, out=out)
+        return out
+
+    dct = fft
 
     __call__ = pdf
 

@@ -1,69 +1,250 @@
+from __future__ import print_function, absolute_import, division
 import numpy as np
 from ..compat.python import range, zip
-from scipy import optimize, integrate
+from scipy import optimize, integrate, interpolate
+from .kde_utils import Grid
 
 class LeaveOneOut(object):
-    def __init__(self, *data, **kwords):
-        sampling = kwords.get('sampling', None)
-        self.data = data
-        self.is_sel = [d.ndim > 0 for d in data]
-        self.n = data[0].shape[0]
-        n = self.n
-        if sampling is not None and sampling > n:
-            sampling = None
-        self.sampling = sampling
-        if sampling is not None:
-            self.ks = np.random.randint(0, n, size=sampling)
+    """
+    Implement full LeaveOneOut method.
 
-    def __len__(self):
-        if self.sampling is None:
-            return self.n
+    Parameters
+    ----------
+    data: tuple of ndarray
+        Data to process.
+    is_sel: tuple of bool
+        Of same length as data, indicate for each array if they are to be filtered or not.
+    npts: int
+        Number of points in the dataset
+    """
+    def __init__(self, data, is_sel, npts):
+        self.data = data
+        self.is_sel = is_sel
+        self.npts = npts
+
+    @property
+    def nb_tests(self):
+        return self.npts
+
+    def __iter__(self):
+        data = self.data
+        is_sel = self.is_sel
+        sel = np.ones((self.npts,), dtype=bool)
+        n = self.npts
+        for i in range(n):
+            sel[i] = False
+            yield (i, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
+            sel[i] = True
+
+class LeaveOneOutSampling(object):
+    """
+    Implement a heureustic for the LeaveOneOut method in which only a sampling of the data are left out.
+
+    Parameters
+    ----------
+    data: tuple of ndarray
+        Data to process.
+    is_sel: tuple of bool
+        Of same length as data, indicate for each array if they are to be filtered or not.
+    npts: int
+        Number of points in the dataset
+    sampling: int
+        Number of points to sample. Must be striclty less than npts.
+    """
+    def __init__(self, data, is_sel, npts, sampling):
+        self.data = data
+        self.is_sel = is_sel
+        self.npts = npts
+        self.sampling = sampling
+        self.ks = np.random.permutation(npts)[:sampling]
+
+    @property
+    def nb_tests(self):
         return self.sampling
 
     def __iter__(self):
         data = self.data
         is_sel = self.is_sel
-        sel = np.ones((self.n,), dtype=bool)
-        n = self.n
-        if self.sampling is None:
-            for i in range(n):
-                sel[i] = False
-                yield (i,) + tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data))
-                sel[i] = True
-        else:
-            for k in self.ks:
-                sel[k] = False
-                yield (k,) + tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data))
-                sel[k] = True
+        n = self.npts
+        sel = np.ones((n,), dtype=bool)
+        for k in self.ks:
+            sel[k] = False
+            yield (k, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
+            sel[k] = True
 
-def integrate_grid(values, grid=None, dv=None):
-    if grid.ndim == 1:
+class LeaveKOutFolding(object):
+    """
+    Implement a variation on Leave-One-Out where the dataset is tiled into k folds. At each iteration, one fold is used 
+    for testing, while the others are used for fitting.
+
+    Parameters
+    ----------
+    data: tuple of ndarray
+        Data to process.
+    is_sel: tuple of bool
+        Of same length as data, indicate for each array if they are to be filtered or not.
+    npts: int
+        Number of points in the dataset
+    folding: int
+        Number of folds to use.
+    """
+    def __init__(self, data, is_sel, npts, folding):
+        self.data = data
+        self.is_sel = is_sel
+        self.npts = npts
+        self.folding = folding
+        fold_size = npts // folding
+        rem = npts % folding
+        idx = np.random.permutation(npts)
+        folds = [None] * folding
+        cur_idx = 0
+        for i in range(rem):
+            end_idx = cur_idx + fold_size +1
+            folds[i] = idx[cur_idx:end_idx]
+            cur_idx = end_idx
+
+        for i in range(rem, folding):
+            end_idx = cur_idx + fold_size
+            folds[i] = idx[cur_idx:end_idx]
+            cur_idx = end_idx
+
+        self.folds = folds
+
+    @property
+    def nb_tests(self):
+        return self.npts
+
+    def __iter__(self):
+        data = self.data
+        is_sel = self.is_sel
+        n = self.npts
+        sel = np.ones((n,), dtype=bool)
+        for f in self.folds:
+            sel[f] = False
+            yield (f, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
+            sel[f] = True
+
+def leave_some_out(exog, *data, **kwords):
+    '''
+    This function selected between the various LeaveOut objects.
+
+    Each object will take a list of arrays. The first array must be the exogeneous dataset. Other arrays are either 
+    "scalar" or arrays. If they are scalars, they will be passed along at each yield, if they are arrays, they must have 
+    the same length as the exogeneous dataset and they will be filtered in the same way.
+
+    The object can be iterated on and return a tuples whose first element is the index(es) of the element(s) left out, 
+    and the second element is a tuple of same size of `data` with what is to be used for the arrays.
+
+    If no parameter is specified beside the data, then an exhaustive leave-one-out is performed. 'sampling' and 
+    'folding' parameters are exclusive and cannot be both specified.
+
+    Parameters
+    ----------
+    exog: ndarray
+        1D or 2D array with the data to fit. The first dimension is the number of points in the dataset.
+    *data: tuple
+        Other arrays or values to select for. If the value doesn't have the same length as exog, then it will be sent 
+        as-is all the times. Otherwise, it will be selected like exog.
+
+    Optional Parameters
+    -------------------
+    sampling: int
+        Instead of an exhaustive leave-one-out, a random sub-sample is iterated over
+    folding: int
+        The exogeneous dataset is split into k groups of same length. For each iteration, (k-1) groups are used for 
+        fitting and the last one is used for testing.
+    '''
+    sampling = kwords.get('sampling', None)
+    folding = kwords.get('folding', None)
+    if sampling is not None and folding is not None:
+        raise ValueError("You can only specify one of 'folding' or 'sampling'")
+    data = (exog,) + data
+    npts = exog.shape[0]
+    is_sel = [d.ndim > 0 and d.shape[0] == npts for d in data]
+    if sampling is not None and sampling > npts:
+        sampling = None
+
+    if sampling is not None:
+        return LeaveOneOutSampling(data, is_sel, npts, sampling)
+    if folding is not None:
+        return LeaveKOutFolding(data, is_sel, npts, folding)
+    return LeaveOneOut(data, is_sel, npts)
+
+
+def integrate_grid(values, grid, dv=None):
+    values = np.asarray(values)
+    ndim = values.ndim
+    if ndim == 1:
         return integrate.trapz(values, grid)
     if grid is not None:
-        n = grid.shape[-1]
-        size_dp = tuple(d-1 for d in grid.shape[:n])
+        gp = Grid(grid)
+        if gp.ndim != ndim:
+            raise ValueError("Error, the grid doesn't have the same dimensions as the values")
+        grid = gp.full('F')
+        size_dp = tuple(d-1 for d in grid.shape[:ndim])
         dp = np.ones(size_dp, dtype=float)
-        for i in range(n):
+        for i in range(ndim):
             left = (np.s_[:-1],) * i
-            right = (np.s_[:-1],) * (n-i-1) + (i,)
+            right = (np.s_[:-1],) * (ndim-i-1) + (i,)
             upper = (np.s_[1:],)
             lower = (np.s_[:-1],)
             dp *= (grid[left + upper + right] - grid[left + lower + right])
-        n1 = n-1
-        var = [[0,1]] * n
-        starts = np.array(np.meshgrid(*var)).T.reshape(2**n, n)
+        n1 = ndim-1
+        var = [[0,1]] * ndim
+        starts = np.array(np.meshgrid(*var)).T.reshape(2**ndim, ndim)
         S = 0
         for start in starts:
             sel = tuple(np.s_[s:s+sd] for s, sd in zip(start, size_dp))
             S += np.sum(values[sel]*dp)
-        S /= 2**n
+        S /= 2**ndim
         return S
     if dv is None:
         dv = 1
     return np.sum(values) * dv
 
+def grid_interpolate(xs, ys, xp):
+    """
+    Interpolate values on a grid
+
+    Parameters
+    ----------
+    xs: ndarray
+        Position of the grid points, as returned by the `grid` method of the KDE method
+    ys: ndarray
+        Values on the grid points
+    xp: ndarray
+        2D array (N,D) with N points in D dimension
+
+    Returns
+    -------
+    ndarray
+        Values interpolated on the points xp
+    """
+    gp = Grid(xs)
+    if gp.ndim == 1:
+        return np.interp(xp, xs, ys)
+    elif gp.ndim == 2:
+        xs = [x.squeeze() for x in gp.sparse()]
+        xmin = xs[0].min()
+        xmax = xs[0].max()
+        ymin = xs[1].min()
+        ymax = xs[1].max()
+        xp = xp.copy()
+        xp[xp[:,0] < xmin, 0] = xmin
+        xp[xp[:,0] > xmax, 0] = xmax
+        xp[xp[:,1] < ymin, 0] = ymin
+        xp[xp[:,1] > ymax, 0] = ymax
+        interp = np.frompyfunc(interpolate.interp2d(xs[0], xs[1], ys, copy=False), 2, 1)
+        return interp(xp[:,0], xp[:,1])
+    xs = gp.full('F').view()
+    xs.shape = (np.prod(xs.shape[:-1]), xs.shape[-1])
+    ys = ys.view()
+    ys.shape = xs.shape[:-1]
+    interp = interpolate.LinearNDInterpolator(xs, ys)
+    return interp(xp)
+
 class ContinuousIMSE(object):
-    def __init__(self, model, initial_method = None, max_sampling = 3000, grid_size = None):
+    def __init__(self, model, initial_method = None, grid_size = None, use_grid = False, **loo_args):
         from . import bandwidths
         test_model = model.copy()
         if initial_method is None:
@@ -71,23 +252,18 @@ class ContinuousIMSE(object):
         else:
             test_model.bandwidth = initial_method
         test_est = test_model.fit()
-        #test_est.kernel = test_est.kernel.convolution
 
         LOO_model = model.copy()
-        LOO_model.exog = np.array(model.exog[1:])
         LOO_model.bandwidth = test_est.bandwidth
-        if model.weights.ndim > 0:
-            LOO_model.weights = np.array(model.weights[1:])
-        if model.adjust.ndim > 0:
-            LOO_model.adjust = np.array(model.adjust[1:])
         LOO_est = LOO_model.fit()
         min_bw = np.min(test_est.bandwidth)*1e-9
 
-        self.LOO = LeaveOneOut(test_est.exog, test_est.weights, test_est.adjust, sampling=max_sampling)
+        self.LOO = leave_some_out(test_est.exog, test_est.weights, test_est.adjust, **loo_args)
         self.bw_min = test_est.bandwidth * 1e-3
         self.test_est = test_est
         self.LOO_est = LOO_est
         self.grid_size = grid_size
+        self.use_grid = use_grid
 
     @property
     def init_bandwidth(self):
@@ -105,12 +281,17 @@ class ContinuousIMSE(object):
         Fx, Fy = test_est.grid(N=self.grid_size)
         F = integrate_grid(Fy**2, grid=Fx)
         L = 0
-        for i, Xi, Wi, Li in self.LOO:
-            LOO_est.exog = Xi
-            LOO_est.weights = Wi
-            LOO_est.adjust = Li
-            L += LOO_est.pdf(exog[i])
-        return F - 2*L / len(self.LOO)
+        use_grid = self.use_grid
+        interp = None
+        for i, (Xi, Wi, Li) in self.LOO:
+            LOO_est.update_inputs(Xi, Wi, Li)
+            if use_grid:
+                xs, gr = LOO_est.grid(N=self.grid_size)
+                vals = grid_interpolate(xs, gr, exog[i])
+            else:
+                vals = LOO_est.pdf(exog[i])
+            L += np.sum(vals)
+        return F - 2*L / self.LOO.nb_tests
 
 class leastsquare_cv_bandwidth(object):
     """
@@ -132,10 +313,6 @@ class leastsquare_cv_bandwidth(object):
     ----------
     initial_method: fun
         Method used to get the initial estimate for the bandwidth
-
-    max_sampling: int
-        Maximum number of samples taken for the leave-one-out IMSE estimator. If None, all the points will be evaluated, 
-        always.
     """
 
     def __init__(self, imse = None, imse_args = {}):
@@ -144,7 +321,6 @@ class leastsquare_cv_bandwidth(object):
         else:
             self.imse = imse
         self.imse_args = imse_args
-        self.max_sampling = 3000
 
     def __call__(self, model):
         imse = self.imse(model, **self.imse_args)
