@@ -1,4 +1,4 @@
-from .kernels import Kernel1D
+from .kernels import Kernel1D, rfftfreq, dctfreq
 from . import _kernels
 import numpy as np
 
@@ -196,7 +196,7 @@ class Epanechnikov(Kernel1D):
         """
         return _kernels.epanechnikov_pm2(xs, out)
 
-    def fft(self, z, out=None):
+    def rfft(self, N, dx, out=None):
         r"""
         FFT of the Epanechnikov kernel:
 
@@ -206,9 +206,10 @@ class Epanechnikov(Kernel1D):
 
         where :math:`w' = w\sqrt{5}`
         """
+        z = rfftfreq(N, dx)
         return _kernels.epanechnikov_fft(z, out)
 
-    def fft_xfx(self, z, out=None):
+    def rfft_xfx(self, N, dx, out=None):
         r"""
         .. math::
 
@@ -216,10 +217,12 @@ class Epanechnikov(Kernel1D):
 
         where :math:`w' = w\sqrt{5}`
         """
+        z = rfftfreq(N, dx)
         return _kernels.epanechnikov_fft_xfx(z, out)
 
 
-    def dct(self, z, out=None):
+    def dct(self, N, dx, out=None):
+        z = dctfreq(N, dx)
         return _kernels.epanechnikov_fft(z, out)
 
 class Epanechnikov_order4(Kernel1D):

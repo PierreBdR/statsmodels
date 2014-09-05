@@ -77,7 +77,7 @@ def _compute_bandwidth(kde):
         return None, cov
     return None, None
 
-def fftdensity(exog, kernel_fft, bw_inv, lower, upper, N, weights, total_weights):
+def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weights):
     """
     Compute the density estimate using a FFT approximation.
 
@@ -85,8 +85,8 @@ def fftdensity(exog, kernel_fft, bw_inv, lower, upper, N, weights, total_weights
     ----------
     exog: ndarray
         2D array with the data to fit
-    kernel_fft: function
-        Function computing the FFT for the kernel
+    kernel_rfft: function
+        Function computing the rFFT for the kernel
     lower: float
         Lower bound on which to compute the density
     upper: float
@@ -116,24 +116,17 @@ def fftdensity(exog, kernel_fft, bw_inv, lower, upper, N, weights, total_weights
     ndim = exog.shape[1]
     mesh = Grid(mesh)
 
+    interval = mesh.interval()
     dx = np.asarray(mesh.interval())
     if bw_inv.ndim == 2:
         dx = dot(dx, bw_inv)
     else:
         dx *= bw_inv
 
-    fs = []
-    for i in range(ndim-1):
-        n = FFTData.shape[i]
-        fs.append(np.fft.fftfreq(n, dx[i]))
-    l = FFTData.shape[-1]
-    t_star = 0.5 / (l*dx[-1])
-    fs.append(np.arange(l) * t_star)
-    gp = np.meshgrid(*fs, indexing='ij')
-    smth = kernel_fft(gp)
+    smth = kernel_rfft(DataHist.shape, dx)
 
     SmoothFFTData = FFTData * smth
-    volume = np.prod(mesh.interval())
+    volume = np.prod(interval)
     density = np.fft.irfftn(SmoothFFTData, DataHist.shape) / volume
     return mesh.grid, density
 
@@ -617,4 +610,4 @@ class Cyclic(KDEnDMethod):
         if not weights.shape:
             weights = None
 
-        return fftdensity(exog, self.kernel.fft, bw_inv, lower, upper, N, weights, self.total_weights)
+        return fftdensity(exog, self.kernel.rfft, bw_inv, lower, upper, N, weights, self.total_weights)

@@ -17,9 +17,11 @@ cdef:
     float64_t SPI = sqrt(M_PI)
     float64_t S2PI = sqrt(2.0*M_PI)
     float64_t S2 = sqrt(2.0)
+    float64_t PI2 = M_PI*M_PI
 
 s2pi = S2PI
 s2 = S2
+pi2 = PI2
 
 cdef void _vectorize(object z,
                      object out,
@@ -266,25 +268,26 @@ def epanechnikov_pm2(object z, object out = None):
     return vectorize(z, out, _epanechnikov_pm2)
 
 cdef float64_t _epanechnikov_fft(float64_t z):
-    z /= epanechnikov_a
     if z == 0:
         return 1
-    cdef float64_t z3 = z*z*z
-    return 3/z3 * (sin(z) - z*(cos(z)))
+    z *= 2*M_PI/epanechnikov_a
+    cdef float64_t z2 = z*z
+    cdef float64_t z3 = z2*z
+    return 3/z3 * (sin(z) - z*cos(z))
 
 def epanechnikov_fft(object z, object out = None):
     return vectorize(z, out, _epanechnikov_fft)
 
 cdef complex128_t _epanechnikov_fft_xfx(float64_t z):
-    z /= epanechnikov_a
     if z == 0:
         return complex128_t(0, 0)
+    z *= 2*M_PI/epanechnikov_a
     cdef:
         float64_t sin_z = sin(z)
         float64_t cos_z = cos(z)
         float64_t z2 = z*z
         float64_t z4 = z2*z2
-    return complex128_t(0, 3/(epanechnikov_a*z4)*(3*z*cos_z - 3*sin_z + z2*sin_z))
+    return complex128_t(0, 9/(epanechnikov_a*z4)*(z*cos_z - sin_z + z2*sin_z/3))
 
 def epanechnikov_fft_xfx(object z, object out = None):
     return vectorize_cplx(z, out, _epanechnikov_fft_xfx)

@@ -294,7 +294,7 @@ def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
 
 def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     '''
-    This is the method equivalent to :py:fun:`numpy_trans1d`
+    This is the method equivalent to :py:func:`numpy_trans1d`
     '''
     if out_dtype is not None:
         out_dtype = np.dtype(out_dtype)

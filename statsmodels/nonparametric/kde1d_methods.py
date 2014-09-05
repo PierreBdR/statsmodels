@@ -753,7 +753,7 @@ class KDE1DMethod(object):
             return 2**10
         return N
 
-def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
+def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     """
     Compute the density estimate using a FFT approximation.
 
@@ -761,8 +761,8 @@ def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
     ----------
     exog: ndarray
         1D array with the data to fit
-    kernel_fft: function
-        Function computing the FFT for the kernel
+    kernel_rfft: function
+        Function computing the rFFT for the kernel
     lower: float
         Lower bound on which to compute the density
     upper: float
@@ -790,11 +790,7 @@ def fftdensity(exog, kernel_fft, bw, lower, upper, N, weights, total_weights):
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfft(DataHist)
 
-    #gp = np.fft.fftfreq(2*(len(FFTData)-1), mesh[1]-mesh[0])
-    l = len(FFTData)
-    t_star = bw / R
-    gp = np.arange(l) * t_star
-    smth = kernel_fft(gp)
+    smth = kernel_rfft(len(DataHist), (mesh[1]-mesh[0])/bw)
 
     SmoothFFTData = FFTData * smth
     density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
@@ -931,7 +927,7 @@ class Cyclic(KDE1DMethod):
         if not weights.shape:
             weights = None
 
-        return fftdensity(exog, self.kernel.fft, bw, lower, upper, N, weights, self.total_weights)
+        return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, weights, self.total_weights)
 
     def grid_size(self, N=None):
         if N is None:
@@ -982,9 +978,7 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     DataHist = DataHist / total_weights
     DCTData = fftpack.dct(DataHist, norm=None)
 
-    t_star = bw / (2*R)
-    gp = np.arange(N) * t_star
-    smth = kernel_dct(gp)
+    smth = kernel_dct(len(DataHist), (mesh[1]-mesh[0])/bw)
 
     # Smooth the DCTransformed data using t_star
     SmDCTData = DCTData * smth
@@ -1224,7 +1218,7 @@ class Renormalization(Unbounded):
         comp_lower = lower - R / 8
         comp_upper = upper + R / 8
 
-        mesh, density = fftdensity(exog, kernel.fft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
+        mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
 
         mesh = mesh[shift_N:shift_N+N]
         density = density[shift_N:shift_N+N]
@@ -1336,8 +1330,8 @@ class LinearCombination(Unbounded):
         comp_upper = est_upper + est_R / 8
         total_weights = self.total_weights
 
-        mesh, density = fftdensity(exog, kernel.fft, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
-        _, z_density = fftdensity(exog, kernel.fft_xfx, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
+        mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
+        _, z_density = fftdensity(exog, kernel.rfft_xfx, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
 
         mesh = mesh[shift_N:shift_N+N]
         density = density[shift_N:shift_N+N]

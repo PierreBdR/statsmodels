@@ -21,6 +21,151 @@ S2PI = np.sqrt(2 * np.pi)
 
 S2 = np.sqrt(2)
 
+from numpy.fft import rfftfreq
+
+def rfftsize(N):
+    """
+    Returns the number of elements in the result of :py:func:`numpy.fft.rfft`.
+    """
+    return (N//2)+1
+
+def rfftnsize(Ns):
+    """
+    Returns the number of elements in the result of :py:func:`numpy.fft.rfft`.
+    """
+    return tuple(Ns[:-1]) + ((Ns[-1]//2)+1,)
+
+def fftnfreq(Ns, dx=None):
+    """
+    Return the Discrete Fourier Transform sample frequencies
+    (for usage with :py:func:`numpy.fft.fftn`, :py:func:`numpy.fft.rfftn`).
+
+    See :py:func:`numpy.fft.rfftfreq` and :py:func:`numpy.fft.rfftn` for details.
+
+    Parameters
+    ----------
+    Ns: list of int
+        Number of samples for each dimension
+    dx: None of list of float
+        If not None, this must be of same length as Ns and is the space between samples along that axis
+
+    Returns
+    -------
+    list of ndarray
+        Sparse grid for the frequencies
+    """
+    ndim = len(Ns)
+    if dx is None:
+        dx = [1.0]*ndim
+    elif len(dx) != ndim:
+        raise ValueError("Error, dx must be of same length as Ns")
+    fs = [ np.fft.fftfreq(Xs[d], dx[d]) for d in range(ndim) ]
+    return np.meshgrid(*fs, indexing='ij', sparse=True, copy=False)
+
+def rfftnfreq(Ns, dx=None):
+    """
+    Return the Discrete Fourier Transform sample frequencies
+    (for usage with :py:func:`numpy.fft.rfftn`, :py:func:`numpy.fft.irfftn`).
+
+    See :py:func:`numpy.fft.rfftfreq` and :py:func:`numpy.fft.rfftn` for details.
+
+    Parameters
+    ----------
+    Ns: list of int
+        Number of samples for each dimension
+    dx: None of list of float
+        If not None, this must be of same length as Ns and is the space between samples along that axis
+
+    Returns
+    -------
+    list of ndarray
+        Sparse grid for the frequencies
+    """
+    ndim = len(Ns)
+    if dx is None:
+        dx = [1.0]*ndim
+    elif len(dx) != ndim:
+        raise ValueError("Error, dx must be of same length as Ns")
+    fs = []
+    for d in range(ndim-1):
+        fs.append(np.fft.fftfreq(Ns[d], dx[d]))
+    fs.append(np.fft.rfftfreq(Ns[-1], dx[-1]))
+    return np.meshgrid(*fs, indexing='ij', sparse=True, copy=False)
+
+def fftsamples(N, dx=1.0):
+    """
+    Returns the array of sample positions needed to comput the FFT with N samples.
+    (for usage with :py:func:`numpy.fft.fft`, :py:func:`numpy.fft.rfft`).
+
+    Parameters
+    ----------
+    N: int
+        Number of samples for the FFT
+    dx: float or None
+        Distance between sample points. If None, dx = 1.0.
+
+    Returns
+    -------
+    ndarray
+        Array of frequencies, as returned by :py:func:`numpy.fft.fftfreq`
+    """
+    if N % 2 == 1:
+        n = (N-1)//2
+        return dx*(np.concatenate([np.arange(n+1), np.arange(-n, 0)]) + 0.5)
+    else:
+        n = N//2
+        return dx*np.concatenate([np.arange(n), np.arange(-n,0)])
+
+def fftnsamples(Ns, dx=None):
+    """
+    Returns the array of sample positions needed to comput the FFT with N samples.
+    (for usage with :py:func:`numpy.fft.fftn`, :py:func:`numpy.fft.rfftn`).
+
+    Parameters
+    ----------
+    N: list of int
+        Number of samples for the FFT for each dimension
+    dx: float or None
+        Distance between sample points for each dimension. If None, dx = 1.0 for each dimension.
+
+    Returns
+    -------
+    list of ndarray
+        Sparse grid for the samples
+    """
+    ndim = len(Ns)
+    if dx is None:
+        dx = [1.0]*ndim
+    elif len(dx) != ndim:
+        raise ValueError("Error, dx must be of same length as Ns")
+    fs = [ fftsamples(Ns[d], dx[d]) for d in range(ndim) ]
+    return np.meshgrid(*fs, indexing='ij', sparse=True, copy=False)
+
+def dctfreq(N, dx=1.0):
+    dz = 1/(2*N*dx)
+    return np.arange(N)*dz
+
+def dctnfreq(Ns, dx=None):
+    ndim = len(Ns)
+    if dx is None:
+        dx = [1.0]*ndim
+    elif len(dx) != ndim:
+        raise ValueError("Error, dx must be of same length as Ns")
+    fs = [ dctfreq(Ns[d], dx[d]) for d in range(ndim) ]
+    return np.meshgrid(*fs, indexing='ij', sparse=True, copy=False)
+
+def dctsamples(N, dx=1.0):
+    return np.arange(0.5, N)*dx
+
+def dctnsamples(Ns, dx=None):
+    ndim = len(Ns)
+    if dx is None:
+        dx = [1.0]*ndim
+    elif len(dx) != ndim:
+        raise ValueError("Error, dx must be of same length as Ns")
+    fs = [ dctsamples(Ns[d], dx[d]) for d in range(ndim) ]
+    return np.meshgrid(*fs, indexing='ij', sparse=True, copy=False)
+
 class Kernel1D(object):
     r"""
     A 1D kernel :math:`K(z)` is a function with the following properties:
@@ -176,53 +321,40 @@ class Kernel1D(object):
             self.__comp_pm2 = comp_pm2
         return comp_pm2(z, out=out)
 
-    def fft(self, z, out=None):
+    def rfft(self, N, dx, out=None):
         """
         FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        l = 2*(len(z)-1)
-        step = 1 / (l * (z[1]-z[0]))
-        n2 = l//2
-        start = -step * n2
-        dz = start + step * np.arange(l)
-        dz = np.roll(dz, n2)
-        pdf = self.pdf(dz)
-        pdf *= step
+        samples = fftsamples(N, dx)
+        pdf = self.pdf(samples)
+        pdf *= dx
         if out is None:
-            out = np.empty(z.shape, dtype=complex)
+            out = np.empty(rfftsize(N), dtype=complex)
         out[:] = np.fft.rfft(pdf)
         return out
 
-    def fft_xfx(self, z, out=None):
+    def rfft_xfx(self, N, dx, out=None):
         """
         FFT of the function :math:`x k(x)`. The points are given as for the fft function.
         """
-        l = 2*(len(z)-1)
-        step = 1 / (l * (z[1]-z[0]))
-        n2 = l//2
-        start = -step * n2
-        dz = start + step * np.arange(l)
-        dz = np.roll(dz, n2)
-        pdf = self.pdf(dz)
-        pdf *= dz
-        pdf *= step
+        samples = fftsamples(N, dx)
+        pdf = self.pdf(samples)
+        pdf *= samples
+        pdf *= dx
         if out is None:
-            out = np.empty(z.shape, dtype=complex)
+            out = np.empty(rfftsize(N), dtype=complex)
         out[:] = np.fft.rfft(pdf)
         return out
 
-    def dct(self, z, out=None):
+    def dct(self, N, dx, out=None):
         r"""
         DCT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        l = len(z)
-        step = 1 / (2 * l * (z[1]-z[0]))
-        dz = step * np.arange(l)
-        dz += step/2
-        out = self.pdf(dz, out=out)
-        out *= step
+        samples = dctsamples(N, dx)
+        out = self.pdf(samples, out=out)
+        out *= dx
         out[...] = fftpack.dct(out, overwrite_x = True)
         return out
 
@@ -266,7 +398,6 @@ class Kernel1D(object):
         sup = np.linspace(-2.5*self.cut, 2.5*self.cut, 2**16)
         sup_out = np.empty(sup.shape, sup.dtype)
         return comp_conv(z, sup, sup_out, out=out)
-        #return comp_conv(z, out=out)
 
     @property
     def convolution(self):
@@ -343,18 +474,21 @@ class normal_kernel1d(Kernel1D):
 
     __call__ = pdf
 
-    def fft(self, z, out=None):
-        """
-        Returns the FFT of the normal distribution
-        """
-        z = np.asfarray(z)
+    def _ft(self, z, out):
         out = np.multiply(z, z, out)
         out *= -2*np.pi**2
         np.exp(out, out)
         return out
 
+    def rfft(self, N, dx, out=None):
+        """
+        Returns the FFT of the normal distribution
+        """
+        z = rfftfreq(N, dx)
+        return self._ft(z, out)
+
     @numpy_trans1d_method(out_dtype=complex)
-    def fft_xfx(self, z, out):
+    def rfft_xfx(self, N, dx, out):
         r"""
         The FFT of :math:`x\mathcal{N}(x)` which is:
 
@@ -362,6 +496,7 @@ class normal_kernel1d(Kernel1D):
 
             \text{FFT}(x \mathcal{N}(x)) = -e^{-\frac{\omega^2}{2}}\omega i
         """
+        z = rfftfreq(N, dx)
         np.multiply(z, z, out)
         out *= -2*np.pi**2
         np.exp(out, out)
@@ -369,7 +504,12 @@ class normal_kernel1d(Kernel1D):
         out *= -2j*np.pi
         return out
 
-    dct = fft
+    def dct(self, N, dx, out=None):
+        """
+        Returns the FFT of the normal distribution
+        """
+        z = dctfreq(N, dx)
+        return self._ft(z, out)
 
     def cdf(self, z, out=None):
         r"""
@@ -517,33 +657,16 @@ class KernelnD(object):
             self.__comp_cdf = comp_cdf
         return comp_cdf(*z, out=out)
 
-    def fft(self, z, out=None):
+    def rfft(self, N, dx, out=None):
         """
         FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        grid = Grid(z)
-        l = np.array(grid.shape)
-        l[-1] = 2*(l[-1]-1)
-        step = 1 / (l * grid.interval())
-        grid_spec = []
-        for i in range(grid.ndim):
-            if l[i] % 2 == 1:
-                n2 = (l[i]-1)//2
-                start = -step[i] * (n2 - 0.5)
-                ls = start + step[i]*np.arange(l[i])
-                ls = np.roll(ls, n2 + 1)
-            else:
-                n2 = l[i]//2
-                start = -step[i] * n2
-                ls = start + step[i]*np.arange(l[i])
-                ls = np.roll(ls, n2)
-            grid_spec.append(ls)
-        dz = np.meshgrid(*grid_spec, indexing='ij')
-        pdf = self.pdf(dz)
-        pdf *= np.prod(step)
+        samples = Grid(fftnsamples(N, dx))
+        pdf = self.pdf(samples.full('F'))
+        pdf *= np.prod(dx)
         if out is None:
-            out = np.empty(props.shape, dtype=complex)
+            out = np.empty(rfftnsize(N), dtype=complex)
         out[:] = np.fft.rfftn(pdf)
         return out
 
@@ -592,14 +715,25 @@ class normal_kernel(KernelnD):
         out /= 2**self.ndim
         return out
 
-    @numpy_trans_method('ndim', 1)
-    def fft(self, fs, out=None):
-        np.sum(fs**2, axis=-1, out=out)
-        out *= -2*(np.pi**2)
-        np.exp(out, out=out)
+    def _ft(self, fs, out):
+        cst = -2*np.pi**2
+        fs = [ np.exp(cst*f**2) for f in fs ]
+        res = fs[0]
+        for i in range(1, len(fs)-1):
+            res = res * fs[i]
+        if out is None:
+            out = np.multiply(res, fs[-1])
+        else:
+            np.multiply(res, fs[-1], out=out)
         return out
 
-    dct = fft
+    def rfft(self, N, dx, out=None):
+        fs = rfftnfreq(N, dx)
+        return self._ft(fs, out)
+
+    def dct(self, N, dx, out=None):
+        fs = dctnfreq(N, dx)
+        return self._ft(fs, out)
 
     __call__ = pdf
 
