@@ -326,121 +326,107 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     return decorator
 
 class Grid(object):
-    def __init__(self, grid):
+    def __init__(self, grid_axes, bounds=None, bin_types=None, edges=None):
         """
         Create a grid from a full or sparse grid as returned by meshgrid or a 1D grid.
         """
-        self._ndim = None
-        self._order = None
-        self._shape = None
-        self._dim_index = None
-        try:
-            grid = np.asarray(grid, dtype=grid[0].dtype)
-            self._grid = grid
-            ndim = grid.ndim-1
-            self._ndim = ndim
-            if ndim == 0:
-                self._ndim = 1
-                self._order = ''
-                self._shape = grid.shape
-            elif grid.shape[-1] == ndim:
-                self._order = 'F'
-                self._shape = grid.shape[:-1]
-                self._dim_indx = -1
-            elif grid.shape[0] == ndim:
-                self._order = 'C'
-                self._shape = grid.shape[1:]
-                self._dim_index = 0
-            else:
-                raise ValueError("Error, this is not a valid grid")
-        except (AttributeError, ValueError): # This might be a sparse grid
-            ndim = len(grid)
-            shape = [None]*ndim
-            for i, m in enumerate(grid):
-                if m.ndim != ndim:
-                    raise ValueError("Error, this is not a valid (sparse) grid")
-                s = m.shape[i]
-                target_shape = (1,)*i + (s,) + (1,)*(ndim-i-1)
-                if m.shape != target_shape:
-                    raise ValueError("Error, this is not a valid (sparse) grid")
-                shape[i] = s
-            self._ndim = ndim
-            self._order = 'S'
-            self._shape = shape
-            self._dim_index = 0
-            self._grid = grid
+        first_elemt = np.asarray(grid_axes[0])
+        if first_elemt.ndim == 0:
+            ndim = 1
+            grid_axes = [ np.asarray(grid_axes) ]
+        else:
+            ndim = len(grid_axes)
+            grid_axes = [ np.asarray(ax).squeeze() for ax in grid_axes ]
+        for d in range(ndim):
+            if grid_axes[d].ndim != 1:
+                raise ValueError("Error, the axis of a grid must be 1D arrays or "
+                                 "have exacltly one dimension with more than 1 element")
+        dt = grid_axes[0].dtype
+        self._grid = grid_axes
+        self._ndim = ndim
+        self._shape = tuple(len(ax) for ax in grid_axes)
+        if bounds is None:
+            bounds = np.asarray([(ax[0]-(ax[1]-ax[0])/2, ax[-1]+(ax[-1]+ax[-2])/2) for ax in grid_axes])
+        else:
+            bounds = np.asarray(bounds)
+            if bounds.ndim == 1:
+                bounds = bounds[None,:]
+        self._bounds = bounds
+        if bin_types is None:
+            bin_types = 'U' * ndim
+        self._bin_types = bin_types
+        if edges is None:
+            edges = [ np.empty((s+1,), dtype=dt) for s in self._shape ]
+            for es, bnd, ax in zip(edges, bounds, grid_axes):
+                es[0] = bnd[0]
+                es[-1] = bnd[1]
+                es[1:-1] = (ax[1:] + ax[:-1])/2
+        self._edges = edges
+        inter = np.empty((ndim,), dtype=dt)
+        for d in range(ndim):
+            inter[d] = grid_axes[d][1] - grid_axes[d][0]
+        self._interval = inter
 
-    @property
-    def dim_index(self):
-        return self._dim_index
 
     @property
     def ndim(self):
         return self._ndim
 
     @property
-    def order(self):
-        return self._order
-
-    @property
     def shape(self):
         return self._shape
+
+    @property
+    def edges(self):
+        return self._edges
 
     @property
     def grid(self):
         return self._grid
 
+    @property
+    def dtype(self):
+        return self._grid[0].dtype
+
+    @property
+    def bounds(self):
+        return self._bounds
+
+    @property
     def interval(self):
         """
         Compute the interval between dimensions of the grid.
         """
-        dim_idx = self.dim_index
-        n = self.ndim
-        grid = self.sparse()
-        upper = [0] * n
-        lower = [0] * n
-        result = np.empty((n,), dtype=grid[0].dtype)
-        for i in range(n):
-            upper[i] = 1
-            result[i] = grid[i][tuple(upper)] - grid[i][tuple(lower)]
-            upper[i] = 0
-        return result
+        return self._interval
 
-    def full(self, order=None):
-        if self.order == 'S':
-            m = np.meshgrid(*self._grid, indexing='ij')
-            if order is 'C':
-                return np.asarray(m)
-            return np.concatenate([g[...,None] for g in m], axis=-1)
-        if order is None or self.order == '' or order == self.order:
-            return self._grid
-        ndim = self.ndim
-        if order == 'C':
-            grid = self._grid
-            return np.asarray([grid[...,i] for i in range(ndim)])
-        return np.concatenate([grid[i,...,None] for i in range(ndim)])
+    def full(self, order='F'):
+        """
+        Return a full representation of the grid.
 
+        If order is 'C', then the first index is the dimension, otherwise the last index is.
+        """
+        if self._ndim == 1:
+            return self._grid[0]
+        m = np.meshgrid(*self._grid, indexing='ij')
+        if order is 'C':
+            return np.asarray(m)
+        return np.concatenate([g[...,None] for g in m], axis=-1)
 
     def sparse(self):
-        order = self.order
-        if order == 'C' or order == 'F':
-            grid = self.grid
-            res = [None] * self.ndim
-            fst = np.s_[:1]
-            col = np.s_[:]
-            ndim = self.ndim
-            for i in range(ndim):
-                idx = (fst,)*i + (col,) + (fst,)*(ndim-i-1)
-                if order == 'C':
-                    idx = (i,) + idx
-                else:
-                    idx = idx + (i,)
-                res[i] = grid[idx]
-            return res
-        return self._grid
+        """
+        Return the sparse representation of the grid.
+        """
+        return np.meshgrid(*self._grid, indexing='ij', copy=False, sparse=True)
 
     def __getitem__(self, idx):
-        return self._grid[idx]
+        """
+        Access the element 'pos' on the dimension 'dim'
+        """
+        try:
+            dim, pos = idx
+            return self._grid[dim][pos]
+        except TypeError:
+            return self._grid[idx]
 
 #
 from scipy import sqrt

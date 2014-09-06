@@ -234,8 +234,8 @@ def grid_interpolate(xs, ys, xp):
         xp[xp[:,0] > xmax, 0] = xmax
         xp[xp[:,1] < ymin, 0] = ymin
         xp[xp[:,1] > ymax, 0] = ymax
-        interp = np.frompyfunc(interpolate.interp2d(xs[0], xs[1], ys, copy=False), 2, 1)
-        return interp(xp[:,0], xp[:,1])
+        interp = interpolate.RectBivariateSpline(xs[0], xs[1], ys, kx=1, ky=1)
+        return interp.ev(xp[:,0], xp[:,1])
     xs = gp.full('F').view()
     xs.shape = (np.prod(xs.shape[:-1]), xs.shape[-1])
     ys = ys.view()
