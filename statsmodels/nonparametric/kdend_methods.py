@@ -110,14 +110,12 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    DataHist, mesh = fast_bin_nd(exog, lower, upper, N, weights=weights, cyclic=True)
+    DataHist, mesh = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfftn(DataHist)
     ndim = exog.shape[1]
-    mesh = Grid(mesh)
 
-    interval = mesh.interval()
-    dx = np.asarray(mesh.interval())
+    dx = np.asarray(mesh.interval)
     if bw_inv.ndim == 2:
         dx = dot(dx, bw_inv)
     else:
@@ -126,9 +124,9 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     smth = kernel_rfft(DataHist.shape, dx)
 
     SmoothFFTData = FFTData * smth
-    volume = np.prod(interval)
+    volume = np.prod(mesh.interval)
     density = np.fft.irfftn(SmoothFFTData, DataHist.shape) / volume
-    return mesh.grid, density
+    return mesh, density
 
 
 class KDEnDMethod(object):

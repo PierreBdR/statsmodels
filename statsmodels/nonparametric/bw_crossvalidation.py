@@ -3,6 +3,7 @@ import numpy as np
 from ..compat.python import range, zip
 from scipy import optimize, integrate, interpolate
 from .kde_utils import Grid
+from .grid_interpolation import GridInterpolator
 
 class LeaveOneOut(object):
     """
@@ -202,47 +203,6 @@ def integrate_grid(values, grid, dv=None):
         dv = 1
     return np.sum(values) * dv
 
-def grid_interpolate(xs, ys, xp):
-    """
-    Interpolate values on a grid
-
-    Parameters
-    ----------
-    xs: ndarray
-        Position of the grid points, as returned by the `grid` method of the KDE method
-    ys: ndarray
-        Values on the grid points
-    xp: ndarray
-        2D array (N,D) with N points in D dimension
-
-    Returns
-    -------
-    ndarray
-        Values interpolated on the points xp
-    """
-    gp = Grid(xs)
-    if gp.ndim == 1:
-        return np.interp(xp, xs, ys)
-    elif gp.ndim == 2:
-        xs = [x.squeeze() for x in gp.sparse()]
-        xmin = xs[0].min()
-        xmax = xs[0].max()
-        ymin = xs[1].min()
-        ymax = xs[1].max()
-        xp = xp.copy()
-        xp[xp[:,0] < xmin, 0] = xmin
-        xp[xp[:,0] > xmax, 0] = xmax
-        xp[xp[:,1] < ymin, 0] = ymin
-        xp[xp[:,1] > ymax, 0] = ymax
-        interp = interpolate.RectBivariateSpline(xs[0], xs[1], ys, kx=1, ky=1)
-        return interp.ev(xp[:,0], xp[:,1])
-    xs = gp.full('F').view()
-    xs.shape = (np.prod(xs.shape[:-1]), xs.shape[-1])
-    ys = ys.view()
-    ys.shape = xs.shape[:-1]
-    interp = interpolate.LinearNDInterpolator(xs, ys)
-    return interp(xp)
-
 class ContinuousIMSE(object):
     def __init__(self, model, initial_method = None, grid_size = None, use_grid = False, **loo_args):
         from . import bandwidths
@@ -286,8 +246,9 @@ class ContinuousIMSE(object):
         for i, (Xi, Wi, Li) in self.LOO:
             LOO_est.update_inputs(Xi, Wi, Li)
             if use_grid:
-                xs, gr = LOO_est.grid(N=self.grid_size)
-                vals = grid_interpolate(xs, gr, exog[i])
+                gr, pdf = LOO_est.grid(N=self.grid_size)
+                interp = GridInterpolator(gr, pdf)
+                vals = interp(exog[i])
             else:
                 vals = LOO_est.pdf(exog[i])
             L += np.sum(vals)

@@ -103,8 +103,6 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         else:
             rem = val - base_idx
             if bin_type == CYCLIC:
-                if base_idx < 0 or base_idx >= M:
-                    print('Pb for obs {0}, val = {1}'.format(i, val))
                 grid[base_idx] += (1-rem)*w
                 if base_idx == M-1:
                     grid[0] += rem*w

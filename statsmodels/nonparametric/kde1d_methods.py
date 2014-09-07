@@ -786,7 +786,7 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    DataHist, mesh = fast_bin(exog, lower, upper, N, weights=weights, cyclic=True)
+    DataHist, mesh = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='C')
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfft(DataHist)
 
@@ -973,7 +973,7 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     R = upper - lower
 
     # Histogram the data to get a crude first approximation of the density
-    DataHist, mesh = fast_bin(exog, lower, upper, N, weights=weights, cyclic=False)
+    DataHist, mesh = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='R')
 
     DataHist = DataHist / total_weights
     DCTData = fftpack.dct(DataHist, norm=None)

@@ -118,11 +118,10 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
                 write_out.shape = (size_data, output_dim)
         else:
             write_out.shape = (size_data,)
-        z = z.view()
         if need_transpose:
-            z.shape = (input_dim, size_data)
+            z = z.reshape(input_dim, size_data)
         else:
-            z.shape = (size_data, input_dim)
+            z = z.reshape(size_data, input_dim)
     if need_transpose:
         write_out = write_out.T
         z = z.T
@@ -326,77 +325,232 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     return decorator
 
 class Grid(object):
-    def __init__(self, grid_axes, bounds=None, bin_types=None, edges=None):
+    """
+    Object representing a grid.
+    """
+    def __init__(self, grid_axes, bounds=None, bin_types=None, edges=None, dtype=None):
         """
         Create a grid from a full or sparse grid as returned by meshgrid or a 1D grid.
+
+        Parameters
+        ----------
+        grid_axes: list of ndarray
+            Each ndarray can have at most 1 dimension with more than 1 element. This dimension contains the position of 
+            each point on the axis
+        bounds: ndarray
+            This is a Dx2 array. For each dimension, the lower and upper bound of the axes (doesn't have to correspond 
+            to the min and max of the axes.
+        bin_types: str
+            A string with as many letter as there are dimensions. For each dimension, gives the kind of axes. Can be one 
+            of 'U', 'R', 'C' or 'N' (See :py:attr:`bin_types`). If a single letter is provided, this is the class for 
+            all axes. If not specified, the default is 'U'.
+        edges: list of ndarray
+            If provided, should be a list with one array per dimension. Each array should have one more element than the 
+            bin for that dimension. These represent the edges of the bins.
         """
+        self._interval = None
+        if isinstance(grid_axes, Grid):
+            self._grid = grid_axes.grid
+            self._ndim = grid_axes.ndim
+            if bounds is None:
+                self._bounds = grid_axes._bounds
+            else:
+                self._bounds = bounds
+            if bin_types is None:
+                self._bin_types = grid_axes._bin_types
+            else:
+                if len(bin_types) == 1:
+                    bin_types = bin_types * self._ndim
+                if len(bin_types) != self._ndim:
+                    raise ValueError("Error, there must be as many bin types as bins")
+                self._bin_types = bin_types
+            if edges is None:
+                self._edges = grid_axes._edges
+            else:
+                self._edges = edges
+            if dtype is not None and dtype != grid_axes._dtype:
+                self._dtype = dtype
+                self._bounds = self._bounds.astype(dtype)
+                self._grid = [ g.astype(dtype) for d in self._grid ]
+                if self._edges is not None:
+                    self._edges = [ e.astype(dtype) for e in self._edges ]
+            return
         first_elemt = np.asarray(grid_axes[0])
         if first_elemt.ndim == 0:
             ndim = 1
             grid_axes = [ np.asarray(grid_axes) ]
         else:
             ndim = len(grid_axes)
-            grid_axes = [ np.asarray(ax).squeeze() for ax in grid_axes ]
+            grid_axes = [ np.asarray(ax) for ax in grid_axes ]
+        if dtype is None:
+            dtype = np.find_common_type([ax.dtype for ax in grid_axes], [])
         for d in range(ndim):
             if grid_axes[d].ndim != 1:
                 raise ValueError("Error, the axis of a grid must be 1D arrays or "
                                  "have exacltly one dimension with more than 1 element")
-        dt = grid_axes[0].dtype
+            grid_axes[d] = grid_axes[d].astype(dtype)
         self._grid = grid_axes
         self._ndim = ndim
+        if bin_types is None:
+            bin_types = 'U' * ndim
+        if len(bin_types) == 1:
+            bin_types = bin_types * ndim
+        elif len(bin_types) != ndim:
+            raise ValueError("Error, there must be as many bin_types as dimensions")
+        self._bin_types = bin_types
         self._shape = tuple(len(ax) for ax in grid_axes)
         if bounds is None:
-            bounds = np.asarray([(ax[0]-(ax[1]-ax[0])/2, ax[-1]+(ax[-1]+ax[-2])/2) for ax in grid_axes])
+            bounds = np.empty((ndim, 2), dtype=dtype)
+            for d in range(ndim):
+                ax = grid_axes[d]
+                if bin_types[d] == 'N':
+                    bounds[d] = [ax[0], ax[-1]]
+                elif bin_types[d] == 'C':
+                    bounds[d] = [ax[0], 2*ax[-1]-ax[-2]]
+                else:
+                    bounds[d] = [(3*ax[0]-ax[1])/2, (3*ax[-1]-ax[-2])/2]
         else:
             bounds = np.asarray(bounds)
             if bounds.ndim == 1:
                 bounds = bounds[None,:]
         self._bounds = bounds
-        if bin_types is None:
-            bin_types = 'U' * ndim
-        self._bin_types = bin_types
-        if edges is None:
-            edges = [ np.empty((s+1,), dtype=dt) for s in self._shape ]
-            for es, bnd, ax in zip(edges, bounds, grid_axes):
-                es[0] = bnd[0]
-                es[-1] = bnd[1]
-                es[1:-1] = (ax[1:] + ax[:-1])/2
         self._edges = edges
-        inter = np.empty((ndim,), dtype=dt)
-        for d in range(ndim):
-            inter[d] = grid_axes[d][1] - grid_axes[d][0]
-        self._interval = inter
 
+    def __repr__(self):
+        dims = 'x'.join(str(s)+bt for s, bt in zip(self.shape, self.bin_types))
+        lims = '[{}]'.format(" ; ".join('{0:g} - {1:g}'.format(b[0], b[1]) for b in self.bounds))
+        return "<Grid {0}, {1}, dtype={2}>".format(dims, lims, self.dtype)
+
+    @staticmethod
+    def fromSparse(grid, *args, **kwords):
+        return Grid([np.squeeze(g) for g in grid], *args, **kwords)
+
+    @staticmethod
+    def fromFull(grid, order='F', *args, **kwords):
+        """
+        Create a Grid from a full mesh represented as a single ndarray.
+        """
+        grid_shape = None
+        if order == 'F':
+            grid_shape = grid.shape[:-1]
+            ndim = grid.shape[-1]
+        else:
+            grid_shape = grid.shape[1:]
+            ndim = grid.shape[0]
+        if len(grid_shape) != ndim:
+            raise ValueError("This is not a valid grid")
+        grid_axes = [None]*ndim
+        selector = [0]*ndim
+        for d in range(ndim):
+            selector[d] = np.s_[:]
+            if order == 'F':
+                sel = tuple(selector) + (d,)
+            else:
+                sel = (d,) + tuple(selector)
+            grid_axes[d] = grid[sel]
+            selector[d] = 0
+        return Grid(grid_axes, *args, **kwords)
+
+    @staticmethod
+    def fromArrays(grid, *args, **kwords):
+        """
+        Create a grid from a list of grids, a list of arrays or a full array C or Fortram-style.
+        """
+        try:
+            grid = np.asarray(grid).squeeze()
+            if not np.issubdtype(grid.dtype, np.number):
+                raise ValueError('Is not full numeric grid')
+            if grid.ndim == 2: # Cannot happen for full grid
+                raise ValueError('Is not full numeric grid')
+            ndim = grid.ndim-1
+            if grid.shape[-1] == ndim:
+                return Grid.fromFull(grid, 'F', *args, **kwords)
+            elif grid.shape[0] == ndim:
+                return Grid.fromFull(grid, 'C', *args, **kwords)
+        except ValueError as ex:
+            return Grid.fromSparse(grid, *args, **kwords)
+        raise ValueError("Couldn't find what kind of grid this is.")
 
     @property
     def ndim(self):
+        """
+        Number of dimensions of the grid
+        """
         return self._ndim
 
     @property
+    def bin_types(self):
+        """
+        Types of the axes.
+
+        The valid types are:
+            - U: Unbounded
+            - R: Reflective
+            - C: Cyclic
+            - N: Non-continuous
+        """
+        return self._bin_types
+
+    @property
     def shape(self):
+        """
+        Shape of the grid (e.g. number of bin for each dimension)
+        """
         return self._shape
 
     @property
     def edges(self):
+        """
+        list of ndarray
+            Edges of the bins for each dimension
+        """
+        if self._edges is None:
+            edges = [ np.empty((s+1,), dtype=dtype) for s in self._shape ]
+            for d, (es, bnd, ax) in enumerate(zip(edges, self.bounds, self.grid_axes)):
+                es[1:-1] = (ax[1:] + ax[:-1])/2
+                if bin_types[d] == 'C':
+                    es[0]
+                else:
+                    es[0] = bnd[0]
+                    es[-1] = bnd[1]
+            self._edges = edges
         return self._edges
 
     @property
     def grid(self):
+        """
+        list of ndarray
+            Position of the bins for each dimensions
+        """
         return self._grid
 
     @property
     def dtype(self):
+        """
+        Type of arrays for the bin positions
+        """
         return self._grid[0].dtype
 
     @property
     def bounds(self):
+        """
+        ndarray
+            Dx2 array with the bounds of each axes
+        """
         return self._bounds
 
     @property
     def interval(self):
         """
-        Compute the interval between dimensions of the grid.
+        For each dimension, the distance between the two first bins.
         """
+        if self._interval is None:
+            ndim = self.ndim
+            grid_axes = self.grid
+            inter = np.empty((ndim,), dtype=self.dtype)
+            for d in range(ndim):
+                inter[d] = grid_axes[d][1] - grid_axes[d][0]
+            self._interval = inter
         return self._interval
 
     def full(self, order='F'):
@@ -416,11 +570,23 @@ class Grid(object):
         """
         Return the sparse representation of the grid.
         """
+        if self._ndim == 1:
+            return self._grid[0]
         return np.meshgrid(*self._grid, indexing='ij', copy=False, sparse=True)
 
     def __getitem__(self, idx):
         """
-        Access the element 'pos' on the dimension 'dim'
+        Shortcut to access bin positions.
+
+        Usage
+        -----
+        >>> grid = Grid([[1,2,3,4,5],[-1,0,1],[7,8,9,10]])
+        >>> grid[0,2]
+        3
+        >>> grid[2,:2]
+        array([7,8])
+        >>> grid[1]
+        array([-1,0,1])
         """
         try:
             dim, pos = idx
