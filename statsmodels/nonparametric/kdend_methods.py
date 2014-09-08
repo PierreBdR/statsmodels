@@ -111,7 +111,8 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     """
     R = upper - lower
     DataHist, mesh = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
-    DataHist = DataHist / total_weights
+    volume = np.prod(mesh.interval)
+    DataHist /= total_weights * volume
     FFTData = np.fft.rfftn(DataHist)
 
     dx = mesh.interval.copy()
@@ -123,8 +124,7 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     smth = kernel_rfft(DataHist.shape, dx)
 
     SmoothFFTData = FFTData * smth
-    volume = np.prod(mesh.interval)
-    density = np.fft.irfftn(SmoothFFTData, DataHist.shape) / volume
+    density = np.fft.irfftn(SmoothFFTData, DataHist.shape)
     return mesh, density
 
 
@@ -264,7 +264,7 @@ class KDEnDMethod(object):
         if bw.ndim == 0:
             cov = bw*bw
             inv_bw = 1/bw
-            det_inv_bw = inv_bw
+            det_inv_bw = inv_bw**self.ndim
         elif bw.ndim == 1:
             assert bw.shape[0] == self.ndim
             cov = bw * bw
@@ -477,9 +477,10 @@ class KDEnDMethod(object):
             return (pts * inv_bw)
         def matrix_inv_bw(pts):
             return np.dot(pts, inv_bw)
-        inv_bw_fct = scalar_inv_bw
         if inv_bw.ndim == 2:
             inv_bw_fct = matrix_inv_bw
+        else:
+            inv_bw_fct = scalar_inv_bw
 
 
         #if inv_bw.ndim == 2:
@@ -540,7 +541,7 @@ class KDEnDMethod(object):
             Number of elements on the grid, per dimension
         """
         gr = generate_grid(self, N, cut)
-        return gr, self.pdf(gr)
+        return gr, self.pdf(gr.full())
 
     @numpy_trans_method('ndim', 1)
     def cdf(self, points, out):
@@ -598,8 +599,6 @@ class Cyclic(KDEnDMethod):
 
         for d in range(self.ndim):
             if upper[d] == np.inf:
-                if cut is None:
-                    cut = self.kernel.cut
                 lower[d] = np.min(exog[:,d]) - cut[d]
                 upper[d] = np.max(exog[:,d]) + cut[d]
 

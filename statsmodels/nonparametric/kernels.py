@@ -16,6 +16,7 @@ from .kde_utils import (make_ufunc, numpy_trans_method, numpy_trans1d_method, fi
 from . import _kernels
 from copy import copy as shallowcopy
 from statsmodels.compat.python import range, zip
+from numpy.lib.stride_tricks import broadcast_arrays
 
 S2PI = np.sqrt(2 * np.pi)
 
@@ -130,8 +131,8 @@ def fftnsamples(Ns, dx=None):
 
     Returns
     -------
-    list of ndarray
-        Sparse grid for the samples
+    Grid
+        Grid for the samples
     """
     ndim = len(Ns)
     if dx is None:
@@ -487,8 +488,7 @@ class normal_kernel1d(Kernel1D):
         z = rfftfreq(N, dx)
         return self._ft(z, out)
 
-    @numpy_trans1d_method(out_dtype=complex)
-    def rfft_xfx(self, N, dx, out):
+    def rfft_xfx(self, N, dx, out=None):
         r"""
         The FFT of :math:`x\mathcal{N}(x)` which is:
 
@@ -497,6 +497,8 @@ class normal_kernel1d(Kernel1D):
             \text{FFT}(x \mathcal{N}(x)) = -e^{-\frac{\omega^2}{2}}\omega i
         """
         z = rfftfreq(N, dx)
+        if out is None:
+            out = np.empty(z.shape, dtype=complex)
         np.multiply(z, z, out)
         out *= -2*np.pi**2
         np.exp(out, out)
@@ -662,8 +664,8 @@ class KernelnD(object):
         FFT of the kernel on the points of ``z``. The points will always be provided as a regular grid spanning the 
         frequency range to be explored.
         """
-        samples = Grid(fftnsamples(N, dx))
-        pdf = self.pdf(samples.full('F'))
+        samples = np.dstack(broadcast_arrays(*fftnsamples(N, dx)))
+        pdf = self.pdf(samples)
         pdf *= np.prod(dx)
         if out is None:
             out = np.empty(rfftnsize(N), dtype=complex)

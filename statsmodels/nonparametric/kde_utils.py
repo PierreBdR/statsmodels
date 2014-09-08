@@ -9,6 +9,7 @@ from ..compat.python import string_types
 import numpy as np
 import inspect
 from .namedtuple import namedtuple
+from numpy.lib.stride_tricks import broadcast_arrays
 
 # Find the largest float available for this numpy
 if hasattr(np, 'float128'):
@@ -561,10 +562,10 @@ class Grid(object):
         """
         if self._ndim == 1:
             return self._grid[0]
-        m = np.meshgrid(*self._grid, indexing='ij')
+        m = broadcast_arrays(*np.meshgrid(*self._grid, indexing='ij', sparse='True', copy='False'))
         if order is 'C':
             return np.asarray(m)
-        return np.concatenate([g[...,None] for g in m], axis=-1)
+        return np.dstack(m)
 
     def linear(self):
         """
@@ -572,10 +573,10 @@ class Grid(object):
         """
         if self._ndim == 1:
             return self._grid[0]
-        m = np.meshgrid(*self._grid, indexing='ij')
+        m = self.full()
         npts = np.prod(self.shape)
-        ndim = self.ndim
-        return np.concatenate([g.reshape(npts, 1) for g in m], axis=1)
+        m.shape = (npts, self.ndim)
+        return m
 
     def sparse(self):
         """
@@ -584,6 +585,9 @@ class Grid(object):
         if self._ndim == 1:
             return self._grid[0]
         return np.meshgrid(*self._grid, indexing='ij', copy=False, sparse=True)
+
+    def __iter__(self):
+        return iter(self._grid)
 
     def __len__(self):
         return len(self._grid)
