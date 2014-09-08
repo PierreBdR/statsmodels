@@ -250,11 +250,11 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
                     rem[d] = 1
             elif bin_types[d] == CYCLIC:
                 if inf[d] >= M[d]-1:
-                    delta = upper[d] - meshes[d][inf[d]]
                     sup[d] = 0
+                    delta = upper[d] - meshes[d][inf[d]]
                 else:
-                    delta = meshes[d][sup[d]] - meshes[d][inf[d]]
                     sup[d] = inf[d]+1
+                    delta = meshes[d][sup[d]] - meshes[d][inf[d]]
                 rem[d] = (val[d] - meshes[d][inf[d]]) / delta
             else: # UNBOUNDED or REFLECTED
                 if inf[d] < 0:

@@ -48,14 +48,14 @@ def generate_grid(kde, N=None, cut=None):
     lower = np.array(kde.lower)
     upper = np.array(kde.upper)
     ndim = kde.ndim
+    axes = [None]*ndim
     for i in range(ndim):
         if lower[i] == -np.inf:
             lower[i] = np.min(kde.exog[:,i]) - cut[i]
         if upper[i] == np.inf:
             upper[i] = np.max(kde.exog[:,i]) + cut[i]
-    xi = tuple(s_[lower[i] : upper[i] : N[i]*1j] for i in range(ndim))
-    gr = np.mgrid[xi]
-    return np.concatenate([g[...,None] for g in gr], axis=-1)
+        axes[i] = np.linspace(lower[i], upper[i], N[i])
+    return Grid(axes)
 
 def _compute_bandwidth(kde):
     """
@@ -113,9 +113,8 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     DataHist, mesh = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfftn(DataHist)
-    ndim = exog.shape[1]
 
-    dx = np.asarray(mesh.interval)
+    dx = mesh.interval.copy()
     if bw_inv.ndim == 2:
         dx = dot(dx, bw_inv)
     else:
@@ -573,7 +572,7 @@ class Cyclic(KDEnDMethod):
                 raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
         if not self.bounded():
             return super(Cyclic, self).pdf(points, out)
-        raise NotImplemented
+        raise NotImplementedError()
 
     def grid(self, N=None, cut=None):
         if self.adjust.shape:
@@ -585,8 +584,8 @@ class Cyclic(KDEnDMethod):
         exog = self.exog
         N = self.grid_size(N)
 
-        lower = self.lower
-        upper = self.upper
+        lower = self.lower.copy()
+        upper = self.upper.copy()
 
         if cut is None:
             cut = self.kernel.cut

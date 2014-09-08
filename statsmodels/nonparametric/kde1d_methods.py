@@ -790,10 +790,10 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     DataHist = DataHist / total_weights
     FFTData = np.fft.rfft(DataHist)
 
-    smth = kernel_rfft(len(DataHist), (mesh[1]-mesh[0])/bw)
+    smth = kernel_rfft(len(DataHist), mesh.interval[0]/bw)
 
     SmoothFFTData = FFTData * smth
-    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / (mesh[1] - mesh[0])
+    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / mesh.interval[0]
     return mesh, density
 
 class Cyclic(KDE1DMethod):

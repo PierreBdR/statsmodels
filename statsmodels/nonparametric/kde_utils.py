@@ -566,6 +566,17 @@ class Grid(object):
             return np.asarray(m)
         return np.concatenate([g[...,None] for g in m], axis=-1)
 
+    def linear(self):
+        """
+        Return a 2D array with all the points "in line"
+        """
+        if self._ndim == 1:
+            return self._grid[0]
+        m = np.meshgrid(*self._grid, indexing='ij')
+        npts = np.prod(self.shape)
+        ndim = self.ndim
+        return np.concatenate([g.reshape(npts, 1) for g in m], axis=1)
+
     def sparse(self):
         """
         Return the sparse representation of the grid.
@@ -573,6 +584,9 @@ class Grid(object):
         if self._ndim == 1:
             return self._grid[0]
         return np.meshgrid(*self._grid, indexing='ij', copy=False, sparse=True)
+
+    def __len__(self):
+        return len(self._grid)
 
     def __getitem__(self, idx):
         """

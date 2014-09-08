@@ -176,12 +176,11 @@ def integrate_grid(values, grid, dv=None):
     values = np.asarray(values)
     ndim = values.ndim
     if ndim == 1:
-        return integrate.trapz(values, grid)
+        return integrate.trapz(values, grid.full())
     if grid is not None:
-        gp = Grid(grid)
-        if gp.ndim != ndim:
+        if grid.ndim != ndim:
             raise ValueError("Error, the grid doesn't have the same dimensions as the values")
-        grid = gp.full('F')
+        grid = grid.full('F')
         size_dp = tuple(d-1 for d in grid.shape[:ndim])
         dp = np.ones(size_dp, dtype=float)
         for i in range(ndim):
