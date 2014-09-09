@@ -1,6 +1,6 @@
 import numpy as np
 from . import _fast_linbin
-from .kde_utils import Grid
+from .grid import Grid
 
 def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
     X = np.atleast_1d(X).astype(float)
@@ -24,7 +24,7 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
     b = float(b)
     mesh, bounds = fct(X, a, b, out, weights, bin_type)
 
-    return out, Grid(mesh, bounds, bin_type)
+    return Grid(mesh, bounds, bin_type), out
 
 def fast_linbin(X, bounds, M, weights = None, bin_type = 'U', out = None):
     r"""
@@ -142,7 +142,7 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
         raise ValueError("Error, bin_types must be a string of length 1 or D (e.g. the number of dimensions)")
 
     mesh, bounds = fct(X, bounds[:,0], bounds[:,1], out, weights, bin_types)
-    return out, Grid(mesh, bounds, bin_types)
+    return Grid(mesh, bounds, bin_types), out
 
 def fast_linbin_nd(X, bounds, M, weights=None, bin_types='U', out=None):
     r"""

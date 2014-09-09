@@ -1,6 +1,6 @@
 import numpy as np
 from . import _grid_interpolation
-from .kde_utils import Grid
+from .grid import Grid
 
 class GridInterpolator(object):
     def __init__(self, grid, values):

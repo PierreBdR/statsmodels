@@ -21,24 +21,24 @@ class TestBandwidth(object):
         cls.ratios = np.array([1., 2., 5.])
         d = randn(500)
         cls.vs = cls.ratios[:, np.newaxis]*np.array([d, d, d])
-        cls.ss = np.var(cls.vs, axis=1)
+        cls.ss = [ bandwidths._spread(X) for X in cls.vs ]
 
-    def variance_methods(self, m):
+    def methods(self, m):
         bws = np.asfarray([m(FakeModel(v)) for v in self.vs])
-        assert bws.shape == (3, 1, 1)
-        rati = bws[:, 0, 0] / self.ss
+        assert bws.shape == (3,1)
+        rati = bws[:,0] / self.ss
         assert sum((rati - rati[0])**2) < 1e-6
-        rati = bws[:, 0, 0] / bws[0, 0, 0]
-        assert sum((rati - self.ratios**2)**2) < 1e-6
+        rati = bws[:,0] / bws[0]
+        assert sum((rati - self.ratios)**2) < 1e-6
 
     def test_variance_methods(self):
-        yield self.variance_methods, bandwidths.silverman_covariance
-        yield self.variance_methods, bandwidths.scotts_covariance
+        yield self.methods, bandwidths.silverman_bandwidth
+        yield self.methods, bandwidths.scotts_bandwidth
 
     def test_botev(self):
         bws = np.array([bandwidths.botev_bandwidth()(FakeModel(v)) for v in self.vs])
         assert bws.shape == (3,)
-        rati = bws**2 / self.ss
+        rati = bws / self.ss
         assert sum((rati - rati[0])**2) < 1e-6
         rati = bws / bws[0]
         assert sum((rati - self.ratios)**2) < 1e-6
@@ -48,11 +48,6 @@ class TestKDE1D(kde_utils.KDETester):
     @classmethod
     def setUpClass(cls):
         kde_utils.setupClass_norm(cls)
-
-    #def test_converge(self):
-        #xs = np.r_[-3:3:512j]
-        #ys = self.dist.pdf(xs)
-        #ks = [ self.createKDE(v, **self.args) for v in self.vs ]
 
     def method_works(self, k, method, name):
         est = k.fit()
@@ -131,9 +126,9 @@ class TestSF(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est)
-        sf = est.sf(xs)
-        cdf = est.cdf(xs)
+        xs = kde1d_methods.generate_grid(est, N=2**8)
+        sf = est.sf(xs.linear())
+        cdf = est.cdf(xs.linear())
         np.testing.assert_allclose(sf, 1-cdf, method.accuracy, method.accuracy)
 
     def grid_method_works(self, k, method, name):
@@ -234,11 +229,11 @@ class TestHazard(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est)
-        h_comp = est.hazard(xs)
-        sf = est.sf(xs)
-        h_ref = est.pdf(xs)
-        sf = est.sf(xs)
+        xs = kde1d_methods.generate_grid(est, N=2**8)
+        h_comp = est.hazard(xs.linear())
+        sf = est.sf(xs.linear())
+        h_ref = est.pdf(xs.linear())
+        sf = est.sf(xs.linear())
         sf[sf < 0] = 0 # Some methods can produce negative sf
         h_ref /= sf
         sel = sf > np.sqrt(method.accuracy)
@@ -277,9 +272,9 @@ class TestCumHazard(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est)
-        h_comp = est.cumhazard(xs)
-        sf = est.sf(xs)
+        xs = kde1d_methods.generate_grid(est, N=2**8)
+        h_comp = est.cumhazard(xs.linear())
+        sf = est.sf(xs.linear())
         sf[sf < 0] = 0 # Some methods can produce negative sf
         h_ref = -np.log(sf)
         sel = sf > np.sqrt(method.accuracy)
@@ -288,7 +283,7 @@ class TestCumHazard(kde_utils.KDETester):
     def grid_method_works(self, k, method, name):
         est = k.fit()
         xs, h_comp = est.cumhazard_grid()
-        xs, sf = est.sf_grid()
+        xs2, sf = est.sf_grid()
         sf[sf < 0] = 0 # Some methods can produce negative sf
         h_ref = -np.log(sf)
         sel = sf > np.sqrt(method.accuracy)
@@ -308,4 +303,7 @@ class TestLogCumHazard(TestCumHazard):
         del cls.sizes[1:]
         cls.methods = kde_utils.methods_log
 
+if __name__ == "__main__":
+    import nose
+    nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb'], exit=False)
 

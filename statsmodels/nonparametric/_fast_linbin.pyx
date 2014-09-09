@@ -55,7 +55,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         raise ValueError('Error, invalid bin type: {0}'.format(err.args[0]))
 
     if bin_type == CYCLIC:
-        shift = -a
+        shift = -a-delta/2
         lower = 0
         upper = M
     elif bin_type == NON_CONTINUOUS:
@@ -117,10 +117,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
                     grid[base_idx] += (1-rem)*w
                     grid[base_idx+1] += rem*w
 
-    if bin_type == 'C':
-        mesh = np.linspace(a, b-delta, M)
-        bounds = [a-delta/2, b-delta/2]
-    elif bin_type == 'M':
+    if bin_type == NON_CONTINUOUS:
         mesh = np.linspace(a, b, M)
         bounds = [a, b]
     else:
@@ -282,7 +279,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
 
         delta[d] = (b[d] - a[d]) / M[d]
         if bin_types[d] == CYCLIC:
-            shift[d] = -a[d]
+            shift[d] = -a[d]-delta[d]/2
             lower[d] = 0
             upper[d] = M[d]
         elif bin_types[d] == NON_CONTINUOUS:
@@ -372,11 +369,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
     mesh = [None]*D
     bounds = np.zeros((D,2), dtype=np.float)
     for d in range(D):
-        if bin_types[d] == CYCLIC:
-            mesh[d] = np.linspace(a[d], b[d]-delta[d], M[d])
-            bounds[d,0] = a[d]-delta[d]/2
-            bounds[d,1] = b[d]-delta[d]/2
-        elif bin_types[d] == NON_CONTINUOUS:
+        if bin_types[d] == NON_CONTINUOUS:
             mesh[d] = np.linspace(a[d], b[d], M[d])
             bounds[d,0] = a[d]
             bounds[d,1] = b[d]

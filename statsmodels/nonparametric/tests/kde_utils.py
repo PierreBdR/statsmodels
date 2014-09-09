@@ -82,41 +82,41 @@ class KDETester(object):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
-                yield self.method_works, k, m, '{0}_{1}'.format(m.instance, i)
+                yield self.method_works, k, m, '{0}_{1}'.format(k.method, i)
 
     def test_grid_methods(self):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
-                yield self.grid_method_works, k, m, '{0}_{1}'.format(m.instance, i)
+                yield self.grid_method_works, k, m, '{0}_{1}'.format(k.method, i)
 
     def test_weights_methods(self):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
                 k.weights = self.weights[i]
-                yield self.method_works, k, m, 'weights_{0}_{1}'.format(m.instance, i)
+                yield self.method_works, k, m, 'weights_{0}_{1}'.format(k.method, i)
 
     def test_weights_grid_methods(self):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
                 k.weights=self.weights[i]
-                yield self.grid_method_works, k, m, 'weights_{0}_{1}'.format(m.instance, i)
+                yield self.grid_method_works, k, m, 'weights_{0}_{1}'.format(k.method, i)
 
     def test_adjust_methods(self):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
                 k.adjust = self.adjust[i]
-                yield self.method_works, k, m, 'adjust_{0}_{1}'.format(m.instance, i)
+                yield self.method_works, k, m, 'adjust_{0}_{1}'.format(k.method, i)
 
     def test_adjust_grid_methods(self):
         for m in self.methods:
             for i in range(len(self.sizes)):
                 k = self.createKDE(self.vs[i], m)
                 k.adjust = self.adjust[i]
-                yield self.grid_method_works, k, m, 'adjust_{0}_{1}'.format(m.instance, i)
+                yield self.grid_method_works, k, m, 'adjust_{0}_{1}'.format(k.method, i)
 
     def kernel_works_(self, k):
         self.kernel_works(k, 'default')

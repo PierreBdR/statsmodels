@@ -37,9 +37,11 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
 from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d, finite
+from .grid import Grid
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D
+from .grid_interpolation import GridInterpolator
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -70,7 +72,9 @@ def generate_grid(kde, N=None, cut=None):
         upper = np.max(kde.exog) + cut * kde.bandwidth
     else:
         upper = kde.upper
-    return np.linspace(lower, upper, N)
+    mesh, step = np.linspace(lower, upper, N, endpoint=False, retstep=True)
+    mesh += step/2
+    return Grid(mesh, bounds=[lower, upper])
 
 def _compute_bandwidth(kde):
     """
@@ -437,6 +441,7 @@ class KDE1DMethod(object):
             the CDF and refine the result numerically using the Newton method.
         """
         xs, ys = self.cdf_grid()
+        xs = xs.linear()
         coarse_result = np.interp(points, ys, xs, self.lower, self.upper)
         lower = self.lower
         upper = self.upper
@@ -576,7 +581,7 @@ class KDE1DMethod(object):
         N = self.grid_size(N)
         g = generate_grid(self, N, cut)
         out = np.empty(g.shape, dtype=float)
-        return g, self.pdf(g, out)
+        return g, self.pdf(g.full(), out)
 
     def cdf_grid(self, N=None, cut=None):
         """
@@ -597,7 +602,7 @@ class KDE1DMethod(object):
         if N <= 2**11:
             g = generate_grid(self, N, cut)
             out = np.empty(g.shape, dtype=float)
-            return g, self.cdf(g, out)
+            return g, self.cdf(g.full(), out)
         return self.numeric_cdf_grid(N, cut)
 
     def icdf_grid(self, N=None, cut=None):
@@ -618,10 +623,11 @@ class KDE1DMethod(object):
         :Default: Linear interpolation of the inverse CDF on a grid
         """
         xs, ys = self.cdf_grid(N, cut)
+        xs = xs.linear()
         N = len(xs)
         points = np.linspace(0, 1, N)
         icdf = np.interp(points, ys, xs, self.lower, self.upper)
-        return points, icdf
+        return Grid(points, bounds=[0,1]), icdf
 
     def sf_grid(self, N=None, cut=None):
         r"""
@@ -658,10 +664,11 @@ class KDE1DMethod(object):
         :Default: Linear interpolation of the inverse survival function on a grid
         """
         xs, ys = self.sf_grid(N, cut)
+        xs = xs.full()
         N = len(xs)
         points = np.linspace(0, 1, N)
         isf = np.interp(points, ys[::-1], xs[::-1], self.upper, self.lower)
-        return points, isf
+        return Grid(points, bounds=[0,1]), isf
 
     def hazard_grid(self, N=None, cut=None):
         r"""
@@ -745,8 +752,7 @@ class KDE1DMethod(object):
         integration of the pdf.
         """
         pts, pdf = self.grid(N, cut)
-        cdf = integrate.cumtrapz(pdf, pts, initial=0)
-        return pts, cdf
+        return pts, pts.cum_integrate(pdf)
 
     def grid_size(self, N=None):
         if N is None:
@@ -786,14 +792,14 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    DataHist, mesh = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='C')
-    DataHist = DataHist / total_weights
+    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='C')
+    DataHist /= total_weights * mesh.start_interval[0]
     FFTData = np.fft.rfft(DataHist)
 
-    smth = kernel_rfft(len(DataHist), mesh.interval[0]/bw)
+    smth = kernel_rfft(len(DataHist), mesh.start_interval[0]/bw)
 
     SmoothFFTData = FFTData * smth
-    density = np.fft.irfft(SmoothFFTData, len(DataHist)) / mesh.interval[0]
+    density = np.fft.irfft(SmoothFFTData, len(DataHist))
     return mesh, density
 
 class Cyclic(KDE1DMethod):
@@ -973,17 +979,17 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     R = upper - lower
 
     # Histogram the data to get a crude first approximation of the density
-    DataHist, mesh = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='R')
+    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='R')
 
-    DataHist = DataHist / total_weights
+    DataHist /= total_weights * (2*R)
     DCTData = fftpack.dct(DataHist, norm=None)
 
-    smth = kernel_dct(len(DataHist), (mesh[1]-mesh[0])/bw)
+    smth = kernel_dct(len(DataHist), mesh.start_interval/bw)
 
     # Smooth the DCTransformed data using t_star
     SmDCTData = DCTData * smth
     # Inverse DCT to get density
-    density = fftpack.idct(SmDCTData, norm=None) / (2 * R)
+    density = fftpack.idct(SmDCTData, norm=None)
 
     return mesh, density
 
@@ -1190,6 +1196,8 @@ class Renormalization(Unbounded):
         return self.numeric_cdf(points, out)
 
     def grid(self, N=None, cut=None):
+        if self.adjust.shape:
+            return KDE1DMethod.grid(self, N, cut)
         if not self.bounded:
             return super(Renormalization, self).grid(N, cut)
 
@@ -1220,6 +1228,7 @@ class Renormalization(Unbounded):
 
         mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
 
+        mesh = mesh.full()
         mesh = mesh[shift_N:shift_N+N]
         density = density[shift_N:shift_N+N]
 
@@ -1230,7 +1239,7 @@ class Renormalization(Unbounded):
 
         density /= a1
 
-        return mesh, density
+        return Grid(mesh, bounds=[lower, upper]), density
 
 class _LinearCombinationKernel(Kernel1D):
     def __init__(self, ker):
@@ -1301,6 +1310,8 @@ class LinearCombination(Unbounded):
         return self.numeric_cdf(points, out)
 
     def grid(self, N=None, cut=None):
+        if self.adjust.shape:
+            return KDE1DMethod.grid(self, N, cut)
         if not self.bounded:
             return super(LinearCombination, self).grid(N, cut)
 
@@ -1333,13 +1344,14 @@ class LinearCombination(Unbounded):
         mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
         _, z_density = fftdensity(exog, kernel.rfft_xfx, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
 
-        mesh = mesh[shift_N:shift_N+N]
+        grid = mesh.full()
+        grid = grid[shift_N:shift_N+N]
         density = density[shift_N:shift_N+N]
         z_density = z_density[shift_N:shift_N+N]
 
         # Apply linear combination approximation
-        l = (lower - mesh) / bw
-        u = (upper - mesh) / bw
+        l = (lower - grid) / bw
+        u = (upper - grid) / bw
         a0 = kernel.cdf(u) - kernel.cdf(l)
         a1 = kernel.pm1(-l) - kernel.pm1(-u)
         a2 = kernel.pm2(u) - kernel.pm2(l)
@@ -1347,9 +1359,9 @@ class LinearCombination(Unbounded):
         density *= a2
         density -= a1*z_density
         density /= a2 * a0 - a1 * a1
-        mesh[0] = 0.
+        grid[0] = 0.
 
-        return mesh, density
+        return Grid(grid), density
 
 Transform = namedtuple('Tranform', ['__call__', 'inv', 'Dinv'])
 
@@ -1596,24 +1608,22 @@ class TransformKDE(KDE1DMethod):
         xs, ys = self.method.grid(N, cut)
         trans = self.trans
         out = np.empty(ys.shape, ys.dtype)
-        transform_distribution(xs, ys, trans.Dinv, out=out)
-        trans.inv(xs, out=xs)
-        return xs, out
+        transform_distribution(xs.full(), ys, trans.Dinv, out=out)
+        return xs.transform(trans.inv), out
 
     def cdf(self, points, out=None):
         return self.method.cdf(self.trans(points), out)
 
     def cdf_grid(self, N=None, cut=None):
         xs, ys = self.method.cdf_grid(N, cut)
-        self.trans.inv(xs, out=xs)
-        return xs, ys
+        return xs.transform(self.trans.inv), ys
 
     def sf(self, points, out=None):
         return self.method.sf(self.trans(points), out)
 
     def sf_grid(self, kde, N=None, cut=None):
         xs, ys = self.method.sf_grid(N, cut)
-        return self.trans.inv(xs), ys
+        return xs.transform(self.trans.inv), ys
 
     def icdf(self, points, out=None):
         out = self.method.icdf(points, out)

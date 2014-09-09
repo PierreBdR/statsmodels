@@ -11,8 +11,8 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy.special import erf
 from scipy import fftpack, integrate
-from .kde_utils import (make_ufunc, numpy_trans_method, numpy_trans1d_method, finite, namedtuple,
-                        Grid)
+from .kde_utils import make_ufunc, numpy_trans_method, numpy_trans1d_method, finite, namedtuple
+from .grid import Grid
 from . import _kernels
 from copy import copy as shallowcopy
 from statsmodels.compat.python import range, zip
@@ -431,6 +431,7 @@ class normal_kernel1d(Kernel1D):
     """
     1D normal density kernel with extra integrals for 1D bounded kernel estimation.
     """
+    cut = 5.
 
     def for_ndim(self, ndim):
         if ndim == 1:
@@ -677,7 +678,7 @@ class normal_kernel(KernelnD):
     Returns a function-object for the PDF of a Normal kernel of variance
     identity and average 0 in dimension ``dim``.
     """
-    cut = 3
+    cut = 5.
 
     def for_ndim(self, ndim):
         """

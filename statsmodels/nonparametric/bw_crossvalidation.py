@@ -1,8 +1,8 @@
 from __future__ import print_function, absolute_import, division
 import numpy as np
 from ..compat.python import range, zip
-from scipy import optimize, integrate, interpolate
-from .kde_utils import Grid
+from scipy import optimize, interpolate
+from .grid import Grid
 from .grid_interpolation import GridInterpolator
 
 class LeaveOneOut(object):
@@ -172,36 +172,6 @@ def leave_some_out(exog, *data, **kwords):
     return LeaveOneOut(data, is_sel, npts)
 
 
-def integrate_grid(values, grid, dv=None):
-    values = np.asarray(values)
-    ndim = values.ndim
-    if ndim == 1:
-        return integrate.trapz(values, grid.full())
-    if grid is not None:
-        if grid.ndim != ndim:
-            raise ValueError("Error, the grid doesn't have the same dimensions as the values")
-        grid = grid.full('F')
-        size_dp = tuple(d-1 for d in grid.shape[:ndim])
-        dp = np.ones(size_dp, dtype=float)
-        for i in range(ndim):
-            left = (np.s_[:-1],) * i
-            right = (np.s_[:-1],) * (ndim-i-1) + (i,)
-            upper = (np.s_[1:],)
-            lower = (np.s_[:-1],)
-            dp *= (grid[left + upper + right] - grid[left + lower + right])
-        n1 = ndim-1
-        var = [[0,1]] * ndim
-        starts = np.array(np.meshgrid(*var)).T.reshape(2**ndim, ndim)
-        S = 0
-        for start in starts:
-            sel = tuple(np.s_[s:s+sd] for s, sd in zip(start, size_dp))
-            S += np.sum(values[sel]*dp)
-        S /= 2**ndim
-        return S
-    if dv is None:
-        dv = 1
-    return np.sum(values) * dv
-
 class ContinuousIMSE(object):
     def __init__(self, model, initial_method = None, grid_size = None, use_grid = False, **loo_args):
         from . import bandwidths
@@ -238,7 +208,7 @@ class ContinuousIMSE(object):
         exog = test_est.exog
         npts = test_est.npts
         Fx, Fy = test_est.grid(N=self.grid_size)
-        F = integrate_grid(Fy**2, grid=Fx)
+        F = Fx.integrate(Fy**2)
         L = 0
         use_grid = self.use_grid
         interp = None

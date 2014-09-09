@@ -7,7 +7,8 @@ This module contains a set of methods to compute multivariates KDEs.
 import numpy as np
 from scipy import linalg
 from statsmodels.compat.python import range
-from .kde_utils import numpy_trans_method, atleast_2df, Grid
+from .kde_utils import numpy_trans_method, atleast_2df
+from .grid import Grid
 from numpy import newaxis
 from . import kde1d_methods
 from copy import copy as shallow_copy
@@ -110,12 +111,11 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    DataHist, mesh = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
-    volume = np.prod(mesh.interval)
-    DataHist /= total_weights * volume
+    mesh, DataHist = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
+    DataHist /= total_weights * mesh.start_volume
     FFTData = np.fft.rfftn(DataHist)
 
-    dx = mesh.interval.copy()
+    dx = mesh.start_interval.copy()
     if bw_inv.ndim == 2:
         dx = dot(dx, bw_inv)
     else:
