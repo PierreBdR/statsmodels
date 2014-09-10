@@ -1621,7 +1621,7 @@ class TransformKDE(KDE1DMethod):
     def sf(self, points, out=None):
         return self.method.sf(self.trans(points), out)
 
-    def sf_grid(self, kde, N=None, cut=None):
+    def sf_grid(self, N=None, cut=None):
         xs, ys = self.method.sf_grid(N, cut)
         return xs.transform(self.trans.inv), ys
 

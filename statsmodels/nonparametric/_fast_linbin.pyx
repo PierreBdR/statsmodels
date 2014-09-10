@@ -11,12 +11,12 @@ from libc.math cimport floor, fmod
 ctypedef np.float64_t DOUBLE
 ctypedef np.int_t INT
 
-DEF UNBOUNDED = 0
+DEF BOUNDED = 0
 DEF REFLECTED = 1
 DEF CYCLIC = 2
 DEF NON_CONTINUOUS = 3
 
-cdef object bin_type_map = dict(U=UNBOUNDED,
+cdef object bin_type_map = dict(B=BOUNDED,
                                 R=REFLECTED,
                                 C=CYCLIC,
                                 N=NON_CONTINUOUS)
@@ -62,7 +62,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         shift = -a
         lower = 0
         upper = M-1
-    else: # REFLECTED of UNBOUNDED
+    else: # REFLECTED of BOUNDED
         shift = -a-delta/2
         lower = -0.5
         upper = M-0.5
@@ -89,7 +89,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
                     val = upper - rem
                 else:
                     val = lower + rem - M
-        else: # UNBOUNDED or NON_CONTINUOUS
+        else: # BOUNDED or NON_CONTINUOUS
             if val < lower or val > upper:
                 continue # Skip this sample
 
@@ -108,7 +108,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
                     grid[0] += rem*w
                 else:
                     grid[base_idx+1] += rem*w
-            else: # UNBOUNDED or REFLECTED
+            else: # BOUNDED or REFLECTED
                 if base_idx < 0:
                     grid[0] += w
                 elif base_idx >= M-1:
@@ -213,7 +213,7 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
                     val = upper - rem
                 else:
                     val = lower + rem - M
-        else: # UNBOUNDED or NON_CONTINUOUS
+        else: # BOUNDED or NON_CONTINUOUS
             if val < lower or val > upper:
                 continue # Skip this sample
 
@@ -316,7 +316,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
                         val[d] = upper[d] - rem[d]
                     else:
                         val[d] = lower[d] + rem[d] - M[d]
-            else: # UNBOUNDED or NON_CONTINUOUS
+            else: # BOUNDED or NON_CONTINUOUS
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_out = 1
                     break
@@ -373,7 +373,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             mesh[d] = np.linspace(a[d], b[d], M[d])
             bounds[d,0] = a[d]
             bounds[d,1] = b[d]
-        else: # UNBOUNDED or REFLECTED
+        else: # BOUNDED or REFLECTED
             mesh[d] = np.linspace(a[d]+delta[d]/2, b[d]-delta[d]/2, M[d])
             bounds[d,0] = a[d]
             bounds[d,1] = b[d]

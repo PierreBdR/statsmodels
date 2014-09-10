@@ -21,8 +21,8 @@ class Grid(object):
             to the min and max of the axes.
         bin_types: str
             A string with as many letter as there are dimensions. For each dimension, gives the kind of axes. Can be one 
-            of 'U', 'R', 'C' or 'N' (See :py:attr:`bin_types`). If a single letter is provided, this is the class for 
-            all axes. If not specified, the default is 'U'.
+            of 'B', 'R', 'C' or 'N' (See :py:attr:`bin_types`). If a single letter is provided, this is the class for 
+            all axes. If not specified, the default is 'B'.
         edges: list of ndarray
             If provided, should be a list with one array per dimension. Each array should have one more element than the 
             bin for that dimension. These represent the edges of the bins.
@@ -71,7 +71,7 @@ class Grid(object):
         self._grid = grid_axes
         self._ndim = ndim
         if bin_types is None:
-            bin_types = 'U' * ndim
+            bin_types = 'B' * ndim
         if len(bin_types) == 1:
             bin_types = bin_types * ndim
         elif len(bin_types) != ndim:
@@ -169,10 +169,14 @@ class Grid(object):
         Types of the axes.
 
         The valid types are:
-            - U: Unbounded
-            - R: Reflective
-            - C: Cyclic
-            - N: Non-continuous
+            - B: Bounded -- The axes is on a bounded domain. During binning, any values outside the domain is ignored, 
+              while during interpolation, such values are put back to the closest boundary.
+            - R: Reflective -- The axes are infinite, but the data are 'reflected' at the boundaries. Any point outside 
+              the domain is put back inside by reflection on the boundaries.
+            - C: Cyclic -- The axes are infinite, but the data is cyclic. Any point outside the defined domain is put 
+              back inside using the cyclic nature of the function.
+            - N: Non-continuous -- The axes are finite and non-continuous. Any data outside the domain is ignored both 
+              for interpolation and binning. Also, interpolation is to the nearest value.
         """
         return self._bin_types
 

@@ -12,12 +12,12 @@ ctypedef grid_interp.intptr_t intptr_t
 
 DEF MAX_DIM = 64
 
-DEF UNBOUNDED = 0
+DEF BOUNDED = 0
 DEF REFLECTED = 1
 DEF CYCLIC = 2
 DEF NON_CONTINUOUS = 3
 
-cdef object bin_type_map = dict(U=UNBOUNDED,
+cdef object bin_type_map = dict(B=BOUNDED,
                                 R=REFLECTED,
                                 C=CYCLIC,
                                 N=NON_CONTINUOUS)
@@ -92,7 +92,7 @@ def interp1d(np.ndarray[DOUBLE] X not None,
             elif val >= mesh[M-1]:
                 out[i] = values[M-1];
                 continue
-        elif bin_type == UNBOUNDED:
+        elif bin_type == BOUNDED:
             if val <= mesh[0]:
                 out[i] = values[0]
                 continue
@@ -122,7 +122,7 @@ def interp1d(np.ndarray[DOUBLE] X not None,
                 delta = mesh[sup] - mesh[inf]
             rem = (val - mesh[inf]) / delta
             out[i] = (1-rem)*values[inf] + rem*values[sup]
-        else: # UNBOUNDED or REFLECTED
+        else: # BOUNDED or REFLECTED
             if inf < 0:
                 out[i] = values[0]
             elif inf >= M-1:
@@ -222,7 +222,7 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
                 elif val[d] >= meshes[d][M[d]-1]:
                     sup[d] = inf[d] = M[d]-1
                     rem[d] = 0
-            elif bin_types[d] == UNBOUNDED:
+            elif bin_types[d] == BOUNDED:
                 if val[d] <= meshes[d][0]:
                     sup[d] = inf[d] = 0
                     rem[d] = 0
@@ -256,7 +256,7 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
                     sup[d] = inf[d]+1
                     delta = meshes[d][sup[d]] - meshes[d][inf[d]]
                 rem[d] = (val[d] - meshes[d][inf[d]]) / delta
-            else: # UNBOUNDED or REFLECTED
+            else: # BOUNDED or REFLECTED
                 if inf[d] < 0:
                     inf[d] = sup[d] = 0
                     rem[d] = 0

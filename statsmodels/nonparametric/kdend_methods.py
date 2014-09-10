@@ -573,7 +573,75 @@ class Cyclic(KDEnDMethod):
                 raise ValueError("Error, cyclic method requires all dimensions to be closed or not bounded")
         if not self.bounded():
             return super(Cyclic, self).pdf(points, out)
-        raise NotImplementedError()
+        exog = self.exog
+
+        m, d = points.shape
+        assert d == self.ndim
+
+        kernel = self.kernel
+        inv_bw = self.inv_bandwidth
+        def scalar_inv_bw(pts):
+            return (pts * inv_bw)
+        def matrix_inv_bw(pts):
+            return np.dot(pts, inv_bw)
+        if inv_bw.ndim == 2:
+            inv_bw_fct = matrix_inv_bw
+        else:
+            inv_bw_fct = scalar_inv_bw
+
+
+        #if inv_bw.ndim == 2:
+            #raise ValueError("Error, this method cannot handle non-diagonal bandwidth matrix.")
+        det_inv_bw = self.det_inv_bandwidth
+        weights = self.weights
+        adjust = self.adjust
+
+        span = inv_bw_fct(self.upper - self.lower)
+
+        if self.npts > m:
+            factor = weights * det_inv_bw / adjust
+            # There are fewer points that data: loop over points
+            energy = np.empty((exog.shape[0],), dtype=out.dtype)
+            #print("iterate on points")
+            for idx in range(m):
+                diff = inv_bw_fct(points[idx] - exog)
+                kernel.pdf(diff, out=energy)
+                for d in range(self.ndim):
+                    if np.isfinite(span[d]):
+                        energy += kernel.pdf(diff - span)
+                        energy += kernel.pdf(diff + span)
+                energy *= factor
+                out[idx] = np.sum(energy)
+        else:
+            weights = np.atleast_1d(weights)
+            adjust = np.atleast_1d(adjust)
+            out[...] = 0
+
+            # There are fewer data that points: loop over data
+            dw = 1 if weights.shape[0] > 1 else 0
+            da = 1 if adjust.shape[0] > 1 else 0
+            na = 0
+            nw = 0
+            n = self.npts
+            energy = np.empty((points.shape[0],), dtype=out.dtype)
+            #print("iterate on exog")
+            for idx in range(n):
+                diff = inv_bw_fct(points - exog[idx])
+                kernel.pdf(diff, out=energy)
+                for d in range(self.ndim):
+                    if np.isfinite(span[d]):
+                        energy += kernel.pdf(diff - span)
+                        energy += kernel.pdf(diff + span)
+                energy *= weights[nw] / adjust[na]
+                out += energy
+                # Iteration for weights and adjust
+                na += da
+                nw += dw
+            out *= det_inv_bw
+
+        out /= self.total_weights
+        return out
+
 
     def grid(self, N=None, cut=None):
         if self.adjust.shape:

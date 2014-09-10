@@ -10,6 +10,7 @@ import numpy as np
 import inspect
 from .namedtuple import namedtuple
 from ..compat.python import range
+import functools
 
 # Find the largest float available for this numpy
 if hasattr(np, 'float128'):
@@ -168,6 +169,7 @@ def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=None):
     if output_dim <= 0:
         raise ValueError("Error, the number of output dimension must be strictly more than 0.")
     def decorator(fct):
+        @functools.wraps(fct)
         def f(z, out=None):
             z, write_out, out = _process_trans_args(z, out, input_dim, output_dim,
                                                     in_dtype, out_dtype)
@@ -202,6 +204,7 @@ def numpy_trans1d(out_dtype=None, in_dtype=None):
     if in_dtype is not None:
         in_dtype = np.dtype(in_dtype)
     def decorator(fct):
+        @functools.wraps(fct)
         def f(z, out=None):
             z = np.asarray(z)
             if in_dtype is not None:
@@ -284,6 +287,7 @@ def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
         in_dtype = np.dtype(in_dtype)
     # Decorator itself
     def decorator(fct):
+        @functools.wraps(fct)
         def f(self, z, out=None):
             z, write_out, out = _process_trans_args(z, out, get_input_dim(self), get_output_dim(self),
                                                     in_dtype, out_dtype)
@@ -301,6 +305,7 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     if in_dtype is not None:
         in_dtype = np.dtype(in_dtype)
     def decorator(fct):
+        @functools.wraps(fct)
         def f(self, z, out=None):
             z = np.asarray(z)
             if in_dtype is not None:

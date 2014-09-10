@@ -63,13 +63,13 @@ class TestKDE1D(kde_utils.KDETester):
     def grid_method_works(self, k, method, name):
         est = k.fit()
         xs, ys = est.grid()
-        tot = integrate.simps(ys, xs)
+        tot = xs.integrate(ys)
         acc = max(method.normed_accuracy, method.grid_accuracy)
         assert abs(tot - 1) < acc, "Error, {} should be close to 1".format(tot)
 
     def test_copy(self):
         k = self.createKDE(self.vs[0], self.methods[0])
-        k.covariance = bandwidths.silverman_covariance
+        k.bandwidth = bandwidths.silverman_bandwidth
         xs = np.r_[self.xs.min():self.xs.max():512j]
         est = k.fit()
         ys = est(xs)
@@ -96,7 +96,7 @@ class TestKDE1D(kde_utils.KDETester):
     def kernel_works(self, ker, name):
         method = self.methods[0]
         k = self.createKDE(self.vs[1], method)
-        k.kernel = ker.cls
+        k.kernel = ker.cls()
         est = k.fit()
         tot = integrate.quad(est.pdf, est.lower, est.upper, limit=100)[0]
         acc = method.normed_accuracy * ker.precision_factor
@@ -107,7 +107,7 @@ class TestKDE1D(kde_utils.KDETester):
         k = self.createKDE(self.vs[1], method)
         est = k.fit()
         xs, ys = est.grid()
-        tot = integrate.simps(ys, xs)
+        tot = xs.integrate(ys)
         acc = max(method.grid_accuracy, method.normed_accuracy) * ker.precision_factor
         assert abs(tot - 1) < acc, "Error, {} should be close to 1".format(tot)
 
