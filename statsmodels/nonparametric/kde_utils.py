@@ -65,27 +65,21 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
     z = np.asarray(z)
     if in_dtype is not None:
         z = z.astype(in_dtype)
+    if z.ndim > 2:
+        raise ValueError('Error, the input array must be at most 2D')
+    z = atleast_2df(z)
     input_shape = z.shape
     need_transpose = False
     # Compute data shape (i.e. input without the dimension)
     z_empty = False
-    if z.ndim == 0:
-        z_empty = True
-        data_shape = (1,)
-        if input_dim == 0:
-            z = z.reshape(1)
-        else:
-            z = z.reshape(1,1)
-    elif input_dim == 0:
-        data_shape = input_shape
-    elif input_dim < 0:
-        data_shape = input_shape[:-1]
+    if input_dim <= 0:
+        npts = input_shape[0]
         input_dim = input_shape[-1]
     else:
         if input_shape[-1] == input_dim:
-            data_shape = input_shape[:-1]
+            npts = input_shape[0]
         elif input_shape[0] == input_dim:
-            data_shape = input_shape[1:]
+            npts = input_shape[1]
             need_transpose = True
         else:
             raise ValueError("Error, the input array is of dimension {0} "
@@ -95,11 +89,11 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
         # Compute the output shape
         if output_dim > 1:
             if need_transpose:
-                output_shape = (output_dim,) + data_shape
+                output_shape = (output_dim, npts)
             else:
-                output_shape = data_shape + (output_dim,)
+                output_shape = (npts, output_dim)
         else:
-            output_shape = data_shape
+            output_shape = (npts,)
         if out_dtype is None:
             out_dtype = z.dtype
             if issubclass(out_dtype.type, np.integer):
@@ -111,19 +105,6 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
     else:
         write_out = out.view()
     # Transpose if needed
-    if input_dim != 0:
-        size_data = np.prod(data_shape)
-        if output_dim > 1:
-            if need_transpose:
-                write_out.shape = (output_dim, size_data)
-            else:
-                write_out.shape = (size_data, output_dim)
-        else:
-            write_out.shape = (size_data,)
-        if need_transpose:
-            z = z.reshape(input_dim, size_data)
-        else:
-            z = z.reshape(size_data, input_dim)
     if need_transpose:
         write_out = write_out.T
         z = z.T
@@ -140,11 +121,10 @@ def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=None):
     ----------
     input_dim: int
         Number of dimensions of the input. The behavior depends on the value:
-            < 0 : The last index is the dimension, but it is of variable size.
-            = 0 : The array is passed as-is to the calling method and is assumed to be 1D. The output will have either
-                  the same shape, or the same shape with another index for the dimension is output_dim > 1.
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
+            else: The last index is the dimension, but it may be any number. A 1D array will be considered n points in
+                  1D.
 
     output_dim: int
         Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or 
@@ -178,6 +158,42 @@ def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=None):
         return f
     return decorator
 
+def _process_trans1d_args(z, dims, out, in_dtype, out_dtype):
+    z = np.asarray(z)
+    if in_dtype is not None:
+        z = z.astype(in_dtype)
+    if dims is not None:
+        z = atleast_2df(z)
+        npts = z.shape[0]
+        ndims = len(dims)
+        if z.ndim > 2:
+            raise ValueError('Error, the input array must be at most 2D')
+    else:
+        npts = np.prod(z.shape)
+        if npts == 0:
+            npts = 1
+    if out is None:
+        if out_dtype is None:
+            dtype = z.dtype
+        else:
+            dtype = out_dtype
+        if issubclass(dtype.type, np.integer):
+            dtype = np.float64
+        if dims is None:
+            out = np.empty(z.shape, dtype=dtype)
+        elif ndims == 1:
+            out = np.empty((npts,), dtype=dtype)
+        else:
+            out = np.empty((npts, len(dims)), dtype=dtype)
+    if dims is not None:
+        if ndims > 1:
+            if out.shape[1] > ndims:
+                return z, out, [out[...,d] for d in dims], True
+            return z, out, [out[...,i] for i in range(len(dims)) ], True
+        else:
+            return z, out, [out], True
+    return z, out, out, False
+
 def numpy_trans1d(out_dtype=None, in_dtype=None):
     """
     This decorator helps provide a uniform interface to 1D numpy transformation functions.
@@ -205,30 +221,16 @@ def numpy_trans1d(out_dtype=None, in_dtype=None):
         in_dtype = np.dtype(in_dtype)
     def decorator(fct):
         @functools.wraps(fct)
-        def f(z, out=None):
-            z = np.asarray(z)
-            if in_dtype is not None:
-                z = z.astype(in_dtype)
-            if out is None:
-                if out_dtype is None:
-                    dtype = z.dtype
-                else:
-                    dtype = out_dtype
-                if issubclass(dtype.type, np.integer):
-                    dtype = np.float64
-                out = np.empty(z.shape, dtype=dtype)
-            size_data = np.prod(z.shape)
-            if size_data == 0:
-                size_data = 1
-            z = z.view()
-            z.shape = (size_data,)
-            write_out = out.view()
-            write_out.shape = (size_data,)
-            fct(z, write_out)
+        def f(z, out=None, dims=None):
+            z, out, write_out, iterate = _process_trans1d_args(z, dims, out, in_dtype, out_dtype)
+            if iterate:
+                for d, o in zip(dims, write_out):
+                    fct(z[...,d], o)
+            else:
+                fct(z, write_out)
             return out
         return f
     return decorator
-
 
 def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
     """
@@ -241,11 +243,10 @@ def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
     ----------
     input_dim: int or str
         Number of dimensions of the input. The behavior depends on the value:
-            < 0 : The last index is the dimension, but it is of variable size.
-            = 0 : The array is passed as-is to the calling method and is assumed to be 1D. The output will have either
-                  the same shape, or the same shape with another index for the dimension is output_dim > 1.
             > 0 : There is a dimension, and its size is known. The dimension should be the first or last index. If it is
                   on the first, the arrays are transposed before being sent to the function.
+            else: The last index is the dimension, but it may be any number. A 1D array will be considered n points in
+                  1D.
         If a string, it should be the name of an attribute containing the input dimension.
 
     output_dim: int or str
@@ -306,26 +307,13 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
         in_dtype = np.dtype(in_dtype)
     def decorator(fct):
         @functools.wraps(fct)
-        def f(self, z, out=None):
-            z = np.asarray(z)
-            if in_dtype is not None:
-                z = z.astype(in_dtype)
-            if out is None:
-                if out_dtype is None:
-                    dtype = z.dtype
-                else:
-                    dtype = out_dtype
-                if issubclass(dtype.type, np.integer):
-                    dtype = np.float64
-                out = np.empty(z.shape, dtype=dtype)
-            size_data = np.prod(z.shape)
-            if size_data == 0:
-                size_data = 1
-            z = z.view()
-            z.shape = (size_data,)
-            write_out = out.view()
-            write_out.shape = (size_data,)
-            fct(self, z, write_out)
+        def f(self, z, out=None, dims=None):
+            z, out, write_out, iterate = _process_trans1d_args(z, dims, out, in_dtype, out_dtype)
+            if iterate:
+                for d, o in zip(dims, write_out):
+                    fct(self, z[...,d], o)
+            else:
+                fct(self, z, out=write_out)
             return out
         return f
     return decorator

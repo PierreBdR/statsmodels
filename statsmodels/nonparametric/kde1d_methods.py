@@ -95,6 +95,49 @@ def _compute_bandwidth(kde):
         return np.sqrt(cov), cov
     raise ValueError("Bandwidth or covariance needs to be specified")
 
+def convolve(exog, points, fct, out, scaling=1., weights=1., factor=1., axis=-1):
+    """
+    Convolve a set of weighted points with a function
+
+    Parameters
+    ----------
+    exog: ndarray
+        Points to convolve. Must be a 1D array.
+    points: ndarray
+        Points where the convolution is evaluated.
+    fct: fun
+        Function used for the convolution
+    out: ndarray
+        Array of same size as `points`, in which the result will be stored.
+    scaling: float or ndarray
+        Scaling of the convolution function. It may be an array the same size as exog.
+    weights: float or ndarray
+        Weights for the exog points.
+    factor: float
+        Normalization factor. The final result will be divided by that value.
+
+    Returns
+    -------
+    ndarray
+        Convolution of the exog points by the scaled function evaluation on the points
+    """
+    if points.ndim > 0:
+        points = points[..., np.newaxis]
+
+    z = (points - exog) / scaling
+
+    terms = fct(z)
+
+    terms = (terms * weights) / scaling
+
+    if terms.ndim > 1:
+        terms.sum(axis=axis, out=out)
+    else:
+        terms.sum(out=out)
+    out /= factor
+    return out
+
+
 class KDE1DMethod(object):
     """
     Base class providing a default grid method and a default method for 
@@ -357,23 +400,8 @@ class KDE1DMethod(object):
         :Default: Direct implementation of the formula for unbounded pdf
             computation.
         """
-        exog = self.exog
-        points = points[..., np.newaxis]
-
-        bw = self.bandwidth * self.adjust
-
-        z = (points - exog) / bw
-
-        kernel = self.kernel
-
-        terms = kernel(z)
-
-        terms *= self.weights / bw
-
-        terms.sum(axis=-1, out=out)
-        out /= self.total_weights
-
-        return out
+        return convolve(self.exog, points, self.kernel.pdf, out,
+                        self.bandwidth*self.adjust, self.weights, self.total_weights)
 
     def __call__(self, points, out=None):
         """
@@ -551,7 +579,7 @@ class KDE1DMethod(object):
         where :math:`l` is the lower bound of the domain, :math:`h` the hazard 
         function and :math:`sf` the survival function.
 
-        :param ndarray points: Points to evaluate the cumulative hazard function on
+        :param ndarray points: Points to evaluate the cumuladavid gutive hazard function on
         :param ndarray out: Result object. If must have the same shapes as ``points``
         :rtype: ndarray
         :return: Returns the ``out`` variable, updated with the cumulative hazard function
@@ -582,6 +610,32 @@ class KDE1DMethod(object):
         g = generate_grid(self, N, cut)
         out = np.empty(g.shape, dtype=float)
         return g, self.pdf(g.full(), out)
+
+    def from_binned(self, mesh, bins, normed=False, axis=-1):
+        result = np.empty_like(bins)
+        if axis < 0:
+            axis = mesh.ndim + axis
+        left = np.index_exp[:]*axis
+        right = np.index_exp[:]*(mesh.ndim-axis-1)
+        pts = mesh.grid[axis].view()
+        pts.shape = (1,) * axis + (len(pts),) + (1,)*(mesh.ndim-axis-1)
+        pdf = self.kernel.pdf
+        sum_weights = bins.sum(axis=axis)
+        if sum_weights.ndim > 0:
+            sum_weights[sum_weights==0] = 1
+        if mesh.ndim == 1:
+            convolve(pts, pts, pdf, result,
+                     scaling=self.bandwidth * self.adjust,
+                     weights = bins,
+                     factor = sum_weights)
+        else:
+            for i, p in enumerate(mesh.grid[axis]):
+                access = left + (i,) + right
+                convolve(pts, p, pdf, result[access],
+                         scaling=self.bandwidth * self.adjust,
+                         weights = bins,
+                         factor = sum_weights)
+        return result
 
     def cdf_grid(self, N=None, cut=None):
         """
@@ -759,6 +813,42 @@ class KDE1DMethod(object):
             return 2**10
         return N
 
+def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, axis=-1):
+    """
+    Parameters
+    ----------
+    mesh: Grid
+        Grid object representing the position of the bins
+    bins: ndarray
+        2D array of same shape as the grid.
+    kernel_rfft: function
+        Function computing the rFFT for the kernel
+    bw: float
+        Bandwidth of the kernel
+    normed: bool
+        If true, the bins will be normalized at the end.
+    axis: int
+        Axis on which to perform the FFT
+
+    Returns
+    -------
+    ndarray
+        An array of same size as the bins, convoluted by the kernel
+    """
+    if axis < 0:
+        axis += mesh.ndim
+    FFTData = np.fft.rfft(bins)
+
+    smth = kernel_rfft(len(bins), mesh.start_interval[0]/bw)
+    if mesh.ndim > 1:
+        smth.shape = (1,)*axis + (len(smth),) + (1,)*(mesh.ndim-axis-1)
+
+    SmoothFFTData = FFTData * smth
+    density = np.fft.irfft(SmoothFFTData, len(bins), axis=axis)
+    if normed:
+        density /= mesh.start_interval[axis]
+    return density
+
 def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     """
     Compute the density estimate using a FFT approximation.
@@ -769,6 +859,8 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
         1D array with the data to fit
     kernel_rfft: function
         Function computing the rFFT for the kernel
+    bw: float
+        Bandwidth of the kernel
     lower: float
         Lower bound on which to compute the density
     upper: float
@@ -794,13 +886,7 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     R = upper - lower
     mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='C')
     DataHist /= total_weights * mesh.start_interval[0]
-    FFTData = np.fft.rfft(DataHist)
-
-    smth = kernel_rfft(len(DataHist), mesh.start_interval[0]/bw)
-
-    SmoothFFTData = FFTData * smth
-    density = np.fft.irfft(SmoothFFTData, len(DataHist))
-    return mesh, density
+    return mesh, fftdensity_from_binned(mesh, DataHist, kernel_rfft, bw)
 
 class Cyclic(KDE1DMethod):
     r"""
@@ -935,6 +1021,9 @@ class Cyclic(KDE1DMethod):
 
         return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, weights, self.total_weights)
 
+    def from_binned(self, mesh, binned, normed=False, axis=-1):
+        return fftdensity_from_binned(mesh, binned, self.kernel.rfft, self.bandwidth, normed=normed, axis=axis)
+
     def grid_size(self, N=None):
         if N is None:
             if self.adjust.shape:
@@ -943,6 +1032,45 @@ class Cyclic(KDE1DMethod):
         return N # 2 ** int(np.ceil(np.log2(N)))
 
 Unbounded = Cyclic
+
+def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, axis=-1):
+    """
+    Parameters
+    ----------
+    mesh: Grid
+        Grid object representing the position of the bins
+    bins: ndarray
+        2D array of same shape as the grid.
+    kernel_rfft: function
+        Function computing the rFFT for the kernel
+    bw: float
+        Bandwidth of the kernel
+    normed: bool
+        If true, the bins will be normalized at the end.
+    axis: int
+        Axis on which to perform the FFT
+
+    Returns
+    -------
+    ndarray
+        An array of same size as the bins, convoluted by the kernel
+    """
+    DCTData = fftpack.dct(bins, 1)
+
+    smth = kernel_dct(len(bins), mesh.start_interval/bw)
+    if mesh.ndim > 1:
+        smth.shape = (1,)*axis + (len(smth),) + (1,)*(mesh.ndim-axis-1)
+
+    # Smooth the DCTransformed data using t_star
+    SmDCTData = DCTData * smth
+    # Inverse DCT to get density
+    density = fftpack.idct(SmDCTData, 1, axis=axis)
+
+    if normed:
+        R = mesh.grid[axis][-1] - mesh.grid[axis][0]
+        density /= 2*R
+
+    return density
 
 def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     """
@@ -982,16 +1110,7 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='R')
 
     DataHist /= total_weights * (2*R)
-    DCTData = fftpack.dct(DataHist, norm=None)
-
-    smth = kernel_dct(len(DataHist), mesh.start_interval/bw)
-
-    # Smooth the DCTransformed data using t_star
-    SmDCTData = DCTData * smth
-    # Inverse DCT to get density
-    density = fftpack.idct(SmDCTData, norm=None)
-
-    return mesh, density
+    return mesh, dctdensity_from_binned(mesh, DataHist, kernel_dct, bw)
 
 class Reflection(KDE1DMethod):
     r"""
@@ -1134,6 +1253,9 @@ class Reflection(KDE1DMethod):
             weights = None
 
         return dctdensity(exog, self.kernel.dct, bw, lower, upper, N, weights, self.total_weights)
+
+    def from_binned(self, mesh, binned, normed=False, axis=-1):
+        return dctdensity_from_binned(mesh, binned, self.kernel.dct, self.bandwidth, normed=normed, axis=axis)
 
     def grid_size(self, N=None):
         if N is None:

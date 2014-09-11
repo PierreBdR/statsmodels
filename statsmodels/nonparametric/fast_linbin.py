@@ -80,7 +80,7 @@ def fast_linbin(X, bounds, M, weights = None, bin_type = 'B', out = None):
     """
     return _fast_bin(_fast_linbin.fast_linbin, X, bounds, M, weights, bin_type, out)
 
-def fast_bin(X, bounds, M, weights = None, bin_types='B'):
+def fast_bin(X, bounds, M, weights = None, bin_type='B'):
     """
     Fast binning in 1D
 
