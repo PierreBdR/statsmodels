@@ -177,7 +177,7 @@ class ContinuousIMSE(object):
         from . import bandwidths
         test_model = model.copy()
         if initial_method is None:
-            test_model.bandwidth = bandwidths.scotts_bandwidth
+            test_model.bandwidth = bandwidths.MultivariateBandwidth()
         else:
             test_model.bandwidth = initial_method
         test_est = test_model.fit()

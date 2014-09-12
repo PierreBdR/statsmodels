@@ -17,10 +17,10 @@ DEF REFLECTED = 1
 DEF CYCLIC = 2
 DEF NON_CONTINUOUS = 3
 
-cdef object bin_type_map = dict(B=BOUNDED,
-                                R=REFLECTED,
-                                C=CYCLIC,
-                                N=NON_CONTINUOUS)
+cdef object bin_type_map = dict(b=BOUNDED,
+                                r=REFLECTED,
+                                c=CYCLIC,
+                                n=NON_CONTINUOUS)
 
 
 @cython.boundscheck(False)

@@ -151,5 +151,29 @@ class botev_bandwidth(object):
 
         return np.sqrt(t_star) * span
 
+class MultivariateBandwidth(object):
+    def __init__(self):
+        self.continuous = scotts_bandwidth
+        self.ordered = 0.1
+        self.unordered = 0.1
+
+    def __call__(self, model):
+        res = np.zeros(model.ndim, dtype=float)
+        c = model.axis_type == 'c'
+        o = model.axis_type == 'o'
+        u = model.axis_type == 'u'
+        if callable(self.continuous):
+            res[c] = self.continuous(model.exog[..., c])
+        else:
+            res[c] = self.continuous
+        if callable(self.ordered):
+            res[o] = self.ordered(model.exog[..., o])
+        else:
+            res[o] = self.ordered
+        if callable(self.unordered):
+            res[u] = self.unordered(model.exog[...,u])
+        else:
+            res[u] = self.unordered
+
 from .bw_crossvalidation import leastsquare_cv_bandwidth
 

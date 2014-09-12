@@ -106,6 +106,18 @@ class Grid(object):
         lims = '[{}]'.format(" ; ".join('{0:g} - {1:g}'.format(b[0], b[1]) for b in self.bounds))
         return "<Grid {0}, {1}, dtype={2}>".format(dims, lims, self.dtype)
 
+    def copy(self):
+        """
+        Deep-copy the content of the grid
+        """
+        grid = [ g.copy() for g in self._grid ]
+        bounds = self._bounds.copy()
+        if self.edges is None:
+            edges = None
+        else:
+            edge = [ e.copy() for e in self._edges ]
+        return Grid(grid, bounds, self.bin_types, edges, self.dtype)
+
     @staticmethod
     def fromSparse(grid, *args, **kwords):
         return Grid([np.squeeze(g) for g in grid], *args, **kwords)
@@ -327,28 +339,29 @@ class Grid(object):
         except TypeError:
             return self._grid[idx]
 
-    def transform(self, *fct):
+    def transform(self, fcts):
         '''
-        Return the grid, transformed by the function given as argument
+        Transform an axis of the grid, in place.
 
         Parameters
         ----------
-        *fct: fun or list of fun
-            Either a single function, or a list with one function per dimension
-
-        Returns
-        -------
-        Grid
-            A new grid with edges and bin positions transformed with the function(s)
+        fcts: fun or list of fun or dict of int: fun
+            Either a single function, a list with one function per dimension or 
+            a dictionnary giving, for a set of axis, how to transform them.
         '''
-        if len(fct) == 1:
-            fct = fct*self.ndim
-        if len(fct) != self.ndim:
-            raise ValueError('Error, you need to provide either a single function, or as many as there are dimensions')
-        edges = [ f(es) for f, es in zip(fct, self.edges) ]
-        bounds = [ f(bs) for f, bs in zip(fct, self.bounds) ]
-        grid = [ f(gr) for f, gr in zip(fct, self.grid) ]
-        return Grid(grid, bounds, self.bin_types, edges, self.dtype)
+        if callable(fcts):
+            fcts = [fcts] * self.ndim
+        for i in range(self.ndim):
+            try:
+                f = fcts[i]
+            except (IndexError, KeyError):
+                pass
+            else:
+                if f is not None:
+                    self.edges[i] = f(self.edges[i])
+                    self.bounds[i] = f(self.bounds[i])
+                    self.grid[i] = f(self.grid[i])
+        return self
 
     def integrate(self, values = None):
         """

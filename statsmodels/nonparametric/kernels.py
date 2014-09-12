@@ -740,11 +740,16 @@ class normal_kernel(KernelnD):
 
     __call__ = pdf
 
-
 from .kernels1d import *
 from .kernelsnd import *
 from .kernelsnc import *
 
 kernels1D = [normal_kernel1d, tricube, Epanechnikov, Epanechnikov_order4, normal_order4]
 kernelsnD = [normal_kernel]
+kernelsNC = [AitchisonAitken, WangRyzin]
+
+class ProductKernel(object):
+    """
+    This is a 'fake' kernel, used to be fitted
+    """
 

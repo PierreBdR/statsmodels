@@ -95,7 +95,7 @@ def _compute_bandwidth(kde):
         return np.sqrt(cov), cov
     raise ValueError("Bandwidth or covariance needs to be specified")
 
-def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., axis=-1):
+def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., dim=-1):
     """
     Convolve a set of weighted point with a function
 
@@ -134,9 +134,9 @@ def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., axis
     terms = (terms * weights) / scaling
 
     if out is None or np.isscalar(out):
-        out = terms.sum(axis=axis)
+        out = terms.sum(axis=dim)
     else:
-        terms.sum(axis=axis, out=out)
+        terms.sum(axis=dim, out=out)
     out /= factor
     return out
 
@@ -167,6 +167,14 @@ class KDE1DMethod(object):
         self._bw = None
         self._cov = None
 
+    @property
+    def axis_type(self):
+        return 'c'
+
+    @property
+    def bin_type(self):
+        return 'b'
+
     def fit(self, kde, compute_bandwidth=True):
         """
         Extract the parameters required for the computation and returns 
@@ -190,7 +198,10 @@ class KDE1DMethod(object):
         is not allowed to change the number of exogenous variables or the 
         dimension of the problem.
         """
-        assert kde.ndim == 1, "Error, this is a 1D method, expecting a 1D problem"
+        if kde.ndim != 1:
+            raise ValueError("Error, this is a 1D method, expecting a 1D problem")
+        if kde.axis_type != self.axis_type:
+            raise ValueError("Error, incompatible method for the type of axis")
         fitted = self.copy()
         if compute_bandwidth:
             bw, cov = _compute_bandwidth(kde)
@@ -296,6 +307,17 @@ class KDE1DMethod(object):
             self._total_weights = self.npts
 
     @property
+    def to_bin(self):
+        """
+        Property holding to data to be binned. This is useful when the PDF is 
+        not evaluated on the real dataset, but on a transformed one.
+        """
+        return self._exog
+
+    transform_axis = None
+    transform_bins = None
+
+    @property
     def exog(self):
         """
         Input points.
@@ -395,6 +417,8 @@ class KDE1DMethod(object):
             Points to evaluate the distribution on
         out: ndarray
             Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
 
         Returns
         -------
@@ -430,6 +454,8 @@ class KDE1DMethod(object):
             Points to evaluate the CDF on
         out: ndarray
             Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
 
         Returns
         -------
@@ -464,12 +490,24 @@ class KDE1DMethod(object):
 
             icdf(p) = \inf\left\{x\in\mathbb{R} : cdf(x) \geq p\right\}
 
-        :param ndarray points: Points to evaluate the iCDF on
-        :param ndarray out: Result object. If must have the same shapes as ``points``
-        :rtype: ndarray
-        :return: Returns the ``out`` variable, updated with the iCDF.
-        :Default: First approximate the result using linear interpolation on
-            the CDF and refine the result numerically using the Newton method.
+        Parameters
+        ----------
+        points: ndarray
+            Points to evaluate the iCDF on
+        out: ndarray
+            Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
+
+        Returns
+        -------
+        ndarray
+            Returns the ``out`` variable, updated with the iCDF.
+
+        Notes
+        -----
+        This method first approximates the result using linear interpolation on the CDF and refine the result 
+        numerically using the Newton method.
         """
         xs, ys = self.cdf_grid()
         xs = xs.linear()
@@ -513,11 +551,23 @@ class KDE1DMethod(object):
 
             sf(x) = P(X \geq x) = \int_x^u p(t) dt = 1 - cdf(x)
 
-        :param ndarray points: Points to evaluate the survival function on
-        :param ndarray out: Result object. If must have the same shapes as ``points``
-        :rtype: ndarray
-        :return: Returns the ``out`` variable, updated with the survival function.
-        :Default: Compute explicitly :math:`1 - cdf(x)`
+        Parameters
+        ----------
+        points: ndarray
+            Points to evaluate the survival function on
+        out: ndarray
+            Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
+
+        Results
+        -------
+        ndarray
+            Returns the ``out`` variable, updated with the survival function.
+
+        Notes
+        -----
+        Compute explicitly :math:`1 - cdf(x)`
         """
         self.cdf(points, out)
         out -= 1
@@ -533,11 +583,23 @@ class KDE1DMethod(object):
 
             isf(p) = \sup\left\{x\in\mathbb{R} : sf(x) \leq p\right\}
 
-        :param ndarray points: Points to evaluate the iSF on
-        :param ndarray out: Result object. If must have the same shapes as ``points``
-        :rtype: ndarray
-        :return: Returns the ``out`` variable, updated with the inverse survival function.
-        :Default: Compute :math:`icdf(1-p)`
+        Parameters
+        ----------
+        points: ndarray
+            Points to evaluate the iSF on
+        out: ndarray
+            Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
+
+        Returns
+        -------
+        ndarray
+            Returns the ``out`` variable, updated with the inverse survival function.
+
+        Notes
+        -----
+        Compute :math:`icdf(1-p)`
         """
         return self.icdf(1-points, out)
 
@@ -546,6 +608,22 @@ class KDE1DMethod(object):
         r"""
         Compute the hazard function evaluated on the points.
 
+        Parameters
+        ----------
+        points: ndarray
+            Points to evaluate the hazard function on
+        out: ndarray
+            Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
+
+        Returns
+        -------
+        ndarray
+            Returns the ``out`` variable, updated with the hazard function
+
+        Notes
+        -----
         The hazard function is defined as:
 
         .. math::
@@ -554,12 +632,6 @@ class KDE1DMethod(object):
 
         where :math:`p(x)` is the probability density function and 
         :math:`sf(x)` is the survival function.
-
-        :param ndarray points: Points to evaluate the hazard function on
-        :param ndarray out: Result object. If must have the same shapes as ``points``
-        :rtype: ndarray
-        :return: Returns the ``out`` variable, updated with the hazard function
-        :Default: Compute explicitly :math:`pdf(x) / sf(x)`
         """
         self.pdf(points, out=out)
         sf = np.empty(out.shape, dtype=out.dtype)
@@ -573,6 +645,22 @@ class KDE1DMethod(object):
         r"""
         Compute the cumulative hazard function evaluated on the points.
 
+        Parameters
+        ----------
+        points: ndarray
+            Points to evaluate the cumuladavid gutive hazard function on
+        out: ndarray
+            Result object. If must have the same shapes as ``points``
+        dims: ndarray
+            If specified, points must be a NxD array and dims must be a (list of) dimensions < D.
+
+        Returns
+        -------
+        ndarray
+            Returns the ``out`` variable, updated with the cumulative hazard function
+
+        Notes
+        -----
         The hazard function is defined as:
 
         .. math::
@@ -581,12 +669,6 @@ class KDE1DMethod(object):
 
         where :math:`l` is the lower bound of the domain, :math:`h` the hazard 
         function and :math:`sf` the survival function.
-
-        :param ndarray points: Points to evaluate the cumuladavid gutive hazard function on
-        :param ndarray out: Result object. If must have the same shapes as ``points``
-        :rtype: ndarray
-        :return: Returns the ``out`` variable, updated with the cumulative hazard function
-        :Default: Compute explicitly :math:`-\ln sf(x)`
         """
         self.sf(points, out)
         out[out < 0] = 0 # Some methods can produce negative sf
@@ -599,43 +681,73 @@ class KDE1DMethod(object):
         Evaluate the PDF of the distribution on a regular grid with at least 
         ``N`` elements.
 
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the PDF has been estimated on, and the
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the PDF has been estimated on, and the
             estimations.
-        :Default: Evaluate :math:`pdf(x)` on a grid generated using
-            :py:func:`generate_grid`
+
+        Notes
+        -----
+        By default, this method evaluates :math:`pdf(x)` on a grid generated
+        using :py:func:`generate_grid`
         """
         N = self.grid_size(N)
         g = generate_grid(self, N, cut)
         out = np.empty(g.shape, dtype=float)
         return g, self.pdf(g.full(), out)
 
-    def from_binned(self, mesh, bins, normed=False, axis=-1):
+    def from_binned(self, mesh, bins, normed=False, dim=-1):
+        """
+        Evaluate the PDF from data already binned. The binning might have been high-dimensional but must be of the same 
+        data.
+
+        Parameters
+        ----------
+        mesh: grid.Grid
+            Grid of the binning
+        bins: ndarray
+            Array of the same shape as the mesh with the values per bin
+        normed: bool
+            If true, the result will be normed w.r.t. the total weight of the exog
+        dim: int
+            Dimension along which the estimation must be done
+
+        Results
+        -------
+        ndarray
+            Array of same size as bins, but with the estimated of the PDF for each line along the dimension `dim`
+        """
         result = np.empty_like(bins)
-        if axis < 0:
-            axis = mesh.ndim + axis
-        left = np.index_exp[:]*axis
-        right = np.index_exp[:]*(mesh.ndim-axis-1)
+        if dim < 0:
+            dim = mesh.ndim + dim
+        left = np.index_exp[:]*dim
+        right = np.index_exp[:]*(mesh.ndim-dim-1)
         pdf = self.kernel.pdf
         if mesh.ndim == 1:
-            pts = mesh.grid[axis]
+            pts = mesh.grid[dim]
             convolve(pts, pts[...,None], pdf, result,
                      scaling=self.bandwidth * self.adjust,
                      weights=bins)
         else:
-            eval_pts = mesh.grid[axis]
+            eval_pts = mesh.grid[dim]
             pts = eval_pts.view()
-            pts.shape = (1,) * axis + (len(pts),) + (1,)*(mesh.ndim-axis-1)
-            for i, p in enumerate(mesh.grid[axis]):
+            pts.shape = (1,) * dim + (len(pts),) + (1,)*(mesh.ndim-dim-1)
+            for i, p in enumerate(mesh.grid[dim]):
                 access = left + (i,) + right
                 convolve(pts, p, pdf, result[access],
                          scaling=self.bandwidth * self.adjust,
                          weights=bins,
-                         axis=axis)
+                         dim=dim)
         if normed:
             result /= self.total_weights
         return result
@@ -645,15 +757,23 @@ class KDE1DMethod(object):
         Evaluate the CDF of the distribution on a regular grid with at least 
         ``N`` elements.
 
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the CDF has been estimated on, and the
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the CDF has been estimated on, and the
             estimations.
-        :Default: Evaluate :math:`cdf(x)` on a grid generated using
-            :py:func:`generate_grid`
+
+        Notes
+        By defaults, thie method evaluate :math:`cdf(x)` on a grid generated using :py:func:`generate_grid`
         """
         N = self.grid_size(N)
         if N <= 2**11:
@@ -667,17 +787,26 @@ class KDE1DMethod(object):
         Compute the inverse cumulative distribution (quantile) function on 
         a grid.
 
-        :Note: The default implementation is not as good an approximation as
-            the plain icdf default method.
-
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the CDF has been estimated on, and the
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the CDF has been estimated on, and the
             estimations.
-        :Default: Linear interpolation of the inverse CDF on a grid
+
+        Notes
+        -----
+        The default implementation is not as good an approximation as the
+        plain icdf default method: it performs a linear interpolation of
+        the inverse CDF on a grid
         """
         xs, ys = self.cdf_grid(N, cut)
         xs = xs.linear()
@@ -690,14 +819,24 @@ class KDE1DMethod(object):
         r"""
         Compute the survival function on a grid.
 
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the survival function has been
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the survival function has been
             estimated on, and the estimations.
-        :Default: Compute explicitly :math:`1 - cdf(x)`
+
+        Notes
+        -----
+        Compute explicitly :math:`1 - cdf(x)`
         """
         points, out = self.cdf_grid(N, cut)
         out -= 1
@@ -708,17 +847,26 @@ class KDE1DMethod(object):
         """
         Compute the inverse survival function on a grid.
 
-        :Note: The default implementation is not as good an approximation as
-            the plain isf default method.
-
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the CDF has been estimated on, and the
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the CDF has been estimated on, and the
             estimations.
-        :Default: Linear interpolation of the inverse survival function on a grid
+
+        Notes
+        -----
+        The default implementation is not as good an approximation as the
+        plain isf default method: it performs a linear interpolation of the
+        inverse survival function on a grid.
         """
         xs, ys = self.sf_grid(N, cut)
         xs = xs.full()
@@ -731,14 +879,24 @@ class KDE1DMethod(object):
         r"""
         Compute the hazard function on a grid.
 
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the hazard function has been
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the hazard function has been
             estimated on, and the estimations.
-        :Default: Compute explicitly :math:`pdf(x) / sf(x)`
+
+        Notes
+        -----
+        Compute explicitly :math:`pdf(x) / sf(x)`
         """
         points, out = self.grid(N, cut)
         _, sf = self.sf_grid(N, cut)
@@ -750,14 +908,24 @@ class KDE1DMethod(object):
         r"""
         Compute the hazard function on a grid.
 
-        :param int N: minimum number of element in the returned grid. Most
+        Parameters
+        ----------
+        N: int
+            minimum number of element in the returned grid. Most
             methods will want to round it to the next power of 2.
-        :param float cut: for unbounded domains, how far from the last data
+        cut: float
+            for unbounded domains, how far from the last data
             point should the grid go, as a fraction of the bandwidth.
-        :rtype: (ndarray, ndarray)
-        :returns: The array of positions the hazard function has been
+
+        Returns
+        -------
+        (ndarray, ndarray)
+            The array of positions the hazard function has been
             estimated on, and the estimations.
-        :Default: Compute explicitly :math:`-\ln sf(x)`
+
+        Notes
+        -----
+        Compute explicitly :math:`-\ln sf(x)`
         """
         points, out = self.sf_grid(N, cut)
         out[out < 0] = 0 # Some methods can produce negative sf
@@ -816,7 +984,7 @@ class KDE1DMethod(object):
             return 2**10
         return N
 
-def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_weights = None, axis=-1):
+def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_weights = None, dim=-1):
     """
     Parameters
     ----------
@@ -830,7 +998,7 @@ def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_we
         Bandwidth of the kernel
     normed: bool
         If true, the bins will be normalized at the end.
-    axis: int
+    dim: int
         Axis on which to perform the FFT
 
     Returns
@@ -838,21 +1006,21 @@ def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_we
     ndarray
         An array of same size as the bins, convoluted by the kernel
     """
-    if axis < 0:
-        axis += mesh.ndim
-    FFTData = np.fft.rfft(bins, axis=axis)
+    if dim < 0:
+        dim += mesh.ndim
+    FFTData = np.fft.rfft(bins, axis=dim)
 
-    smth = kernel_rfft(bins.shape[axis], mesh.start_interval[axis]/bw)
+    smth = kernel_rfft(bins.shape[dim], mesh.start_interval[dim]/bw)
     if mesh.ndim > 1:
-        smth.shape = (1,)*axis + (len(smth),) + (1,)*(mesh.ndim-axis-1)
+        smth.shape = (1,)*dim + (len(smth),) + (1,)*(mesh.ndim-dim-1)
 
     SmoothFFTData = FFTData * smth
-    density = np.fft.irfft(SmoothFFTData, bins.shape[axis], axis=axis)
-    density /=  mesh.start_interval[axis]
+    density = np.fft.irfft(SmoothFFTData, bins.shape[dim], axis=dim)
+    density /=  mesh.start_interval[dim]
     if normed:
         if total_weights is None:
             total_weights = bins.sum()
-        density /= total_weights * mesh.start_interval[axis]
+        density /= total_weights * mesh.start_interval[dim]
     return density
 
 def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
@@ -890,7 +1058,7 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='C')
+    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='c')
     DataHist /= total_weights
     return mesh, fftdensity_from_binned(mesh, DataHist, kernel_rfft, bw)
 
@@ -918,6 +1086,10 @@ class Cyclic(KDE1DMethod):
     """
 
     name = 'cyclic'
+
+    @property
+    def bin_type(self):
+        return 'c'
 
     @numpy_trans1d_method()
     def pdf(self, points, out):
@@ -1027,9 +1199,9 @@ class Cyclic(KDE1DMethod):
 
         return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, weights, self.total_weights)
 
-    def from_binned(self, mesh, binned, normed=False, axis=-1):
+    def from_binned(self, mesh, binned, normed=False, dim=-1):
         return fftdensity_from_binned(mesh, binned, self.kernel.rfft, self.bandwidth, normed,
-                                      self.total_weights, axis)
+                                      self.total_weights, dim)
 
     def grid_size(self, N=None):
         if N is None:
@@ -1040,7 +1212,7 @@ class Cyclic(KDE1DMethod):
 
 Unbounded = Cyclic
 
-def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_weights=None, axis=-1):
+def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_weights=None, dim=-1):
     """
     Parameters
     ----------
@@ -1054,7 +1226,7 @@ def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_wei
         Bandwidth of the kernel
     normed: bool
         If true, the bins will be normalized at the end.
-    axis: int
+    dim: int
         Axis on which to perform the FFT
 
     Returns
@@ -1062,17 +1234,17 @@ def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_wei
     ndarray
         An array of same size as the bins, convoluted by the kernel
     """
-    DCTData = fftpack.dct(bins, axis=axis)
+    DCTData = fftpack.dct(bins, axis=dim)
 
-    smth = kernel_dct(bins.shape[axis], mesh.start_interval[axis]/bw)
+    smth = kernel_dct(bins.shape[dim], mesh.start_interval[dim]/bw)
     if mesh.ndim > 1:
-        smth.shape = (1,)*axis + (len(smth),) + (1,)*(mesh.ndim-axis-1)
+        smth.shape = (1,)*dim + (len(smth),) + (1,)*(mesh.ndim-dim-1)
 
     # Smooth the DCTransformed data using t_star
     SmDCTData = DCTData * smth
     # Inverse DCT to get density
-    R = mesh.grid[axis][-1] - mesh.grid[axis][0]
-    density = fftpack.idct(SmDCTData, axis=axis) / (2*R)
+    R = mesh.grid[dim][-1] - mesh.grid[dim][0]
+    density = fftpack.idct(SmDCTData, axis=dim) / (2*R)
 
     if normed:
         if total_weights is None:
@@ -1116,7 +1288,7 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     R = upper - lower
 
     # Histogram the data to get a crude first approximation of the density
-    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='R')
+    mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='r')
 
     DataHist /= total_weights
     return mesh, dctdensity_from_binned(mesh, DataHist, kernel_dct, bw)
@@ -1148,6 +1320,10 @@ class Reflection(KDE1DMethod):
     """
 
     name = 'reflection'
+
+    @property
+    def bin_type(self):
+        return 'r'
 
     @numpy_trans1d_method()
     def pdf(self, points, out):
@@ -1263,8 +1439,9 @@ class Reflection(KDE1DMethod):
 
         return dctdensity(exog, self.kernel.dct, bw, lower, upper, N, weights, self.total_weights)
 
-    def from_binned(self, mesh, binned, normed=False, axis=-1):
-        return dctdensity_from_binned(mesh, binned, self.kernel.dct, self.bandwidth, normed=normed, axis=axis)
+    def from_binned(self, mesh, binned, normed=False, dim=-1):
+        return dctdensity_from_binned(mesh, binned, self.kernel.dct, self.bandwidth, normed,
+                                      self.total_weights, dim=dim)
 
     def grid_size(self, N=None):
         if N is None:
@@ -1534,10 +1711,10 @@ def transform_distribution(xs, ys, Dinv, out):
         f_Y(y) = \left| \frac{1}{g'(g^{-1}(y))} \right| \cdot f_X(g^{-1}(y))
 
     """
-    Dinv(xs, out=out)
-    np.abs(out, out=out)
-    _inverse(out, out=out)
-    np.multiply(out, ys, out=out)
+    di = Dinv(xs)
+    np.abs(di, out=di)
+    _inverse(di, out=di)
+    np.multiply(di, ys, out=out)
     return out
 
 
@@ -1545,17 +1722,27 @@ def create_transform(obj, inv=None, Dinv=None):
     """
     Create a transform object.
 
-    :param fun obj: This can be either simple a function, or a function-object with an 'inv' and/or 'Dinv' attributes
+    Parameters
+    ----------
+    obj: fun
+        This can be either simple a function, or a function-object with an 'inv' and/or 'Dinv' attributes
         containing the inverse function and its derivative (respectively)
-    :param fun inv: If provided, inverse of the main function
-    :param fun Dinv: If provided, derivative of the inverse function
-    :rtype: Transform
-    :returns: A transform object with function, inverse and derivative of the inverse
+    inv: fun
+        If provided, inverse of the main function
+    Dinv: fun
+        If provided, derivative of the inverse function
 
+    Returns
+    -------
+    Transform
+        A transform object with function, inverse and derivative of the inverse
+
+    Notes
+    -----
     The inverse function must be provided, either as argument or as attribute to the object. The derivative of the 
     inverse will be estimated numerically if not provided.
 
-    :Note: All the functions should accept an ``out`` argument to store the result.
+    All the functions should accept an ``out`` argument to store the result.
     """
     if isinstance(obj, Transform):
         return obj
@@ -1610,22 +1797,31 @@ class TransformKDE(KDE1DMethod):
         - Derivative of the invert function
 
     If the derivative is not provided, it will be estimated numerically.
-
-    :param trans: Either a simple function, or a function object with
-        attributes `inv` and `Dinv` to use in case they are not provided as 
-        arguments. The helper :py:func:`create_transform` will provide numeric 
-        approximation of the derivative if required.
-    :param method: instance of KDE1DMethod used in the transformed domain.
-        Default is :py:class:`Reflection`
-    :param inv: Invert of the function. If not provided, `trans` must have
-        it as attribute.
-    :param Dinv: Derivative of the invert function.
-
-    :Note: all given functions should accept an optional ``out`` argument to
-        get a pre-allocated array to store its result. Also the ``out`` 
-        parameter may be one of the input argument.
     """
     def __init__(self, trans, method=None, inv=None, Dinv=None):
+        """
+        Parameters
+        ----------
+        trans:
+            Either a simple function, or a function object with
+            attributes `inv` and `Dinv` to use in case they are not provided as 
+            arguments. The helper :py:func:`create_transform` will provide numeric 
+            approximation of the derivative if required.
+        method:
+            instance of KDE1DMethod used in the transformed domain.
+            Default is :py:class:`Reflection`
+        inv:
+            Invert of the function. If not provided, `trans` must have
+            it as attribute.
+        Dinv:
+            Derivative of the invert function.
+
+        Notes
+        -----
+        all given functions should accept an optional ``out`` argument to get 
+        a pre-allocated array to store its result. 
+        Also the ``out`` parameter may be one of the input argument.
+        """
         super(TransformKDE, self).__init__()
         self.trans = create_transform(trans, inv, Dinv)
         if method is None:
@@ -1660,6 +1856,26 @@ class TransformKDE(KDE1DMethod):
         if self._fitted:
             raise ValueError("You cannot change the method of a fitted TransformKDE")
         self._method = m
+
+    def update_inputs(self, exog, weights=1., adjust=1.):
+        """
+        Update all the variable lengths inputs at once to ensure consistency
+        """
+        exog = np.atleast_1d(exog)
+        if exog.ndim != 1:
+            raise ValueError("Error, exog must be a 1D array (nb dimensions: {})".format(exog.ndim))
+        weights = np.asarray(weights).squeeze()
+        adjust = np.asarray(adjust).squeeze()
+        if weights.ndim != 0 and weights.shape != exog.shape:
+            raise ValueError("Error, weights must be either a single number, or an array the same shape as exog")
+        if adjust.ndim != 0 and adjust.shape != exog.shape:
+            raise ValueError("Error, adjust must be either a single number, or an array the same shape as exog")
+        self._exog = exog
+        self.method.update_inputs(self.trans(exog), weights, adjust)
+
+    @property
+    def to_bin(self):
+        return self.method.exog
 
     @property
     def exog(self):
@@ -1704,8 +1920,6 @@ class TransformKDE(KDE1DMethod):
         one-time calculation.
 
         This method copy, and transform, the various attributes of the KDE.
-
-        :param pyqt_fit.self.KDE kde: KDE object being fitted
         """
         fitted = super(TransformKDE, self).fit(kde, False)
         fitted._clean_attrs()
@@ -1740,21 +1954,24 @@ class TransformKDE(KDE1DMethod):
         trans = self.trans
         out = np.empty(ys.shape, ys.dtype)
         transform_distribution(xs.full(), ys, trans.Dinv, out=out)
-        return xs.transform(trans.inv), out
+        xs.transform(self.trans.inv)
+        return xs, out
 
     def cdf(self, points, out=None):
         return self.method.cdf(self.trans(points), out)
 
     def cdf_grid(self, N=None, cut=None):
         xs, ys = self.method.cdf_grid(N, cut)
-        return xs.transform(self.trans.inv), ys
+        xs.transform(self.trans.inv)
+        return xs, ys
 
     def sf(self, points, out=None):
         return self.method.sf(self.trans(points), out)
 
     def sf_grid(self, N=None, cut=None):
         xs, ys = self.method.sf_grid(N, cut)
-        return xs.transform(self.trans.inv), ys
+        xs.transform(self.trans.inv)
+        return xs, ys
 
     def icdf(self, points, out=None):
         out = self.method.icdf(points, out)
@@ -1775,6 +1992,15 @@ class TransformKDE(KDE1DMethod):
         xs, ys = self.method.isf_grid(N, cut)
         self.trans.inv(ys, out=ys)
         return xs, ys
+
+    def transform_axis(self, values):
+        return self.trans.inv
+
+    def transform_bins(self, mesh, bins, axis=-1):
+        out = np.empty_like(bins)
+        xs = mesh.sparse()[axis]
+        return transform_distribution(mesh, bins, self.trans.Dinv, out=out)
+
 
 def _add_fwd_attr(cls, to_fwd, attr):
     try:

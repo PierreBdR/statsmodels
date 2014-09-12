@@ -59,10 +59,12 @@ import numpy as np
 from . import kernels, bandwidths
 from . import kde1d_methods
 from . import kdend_methods
+from . import kde_methods
 from .kde_utils import atleast_2df
 
 #default_method = kde1d_methods.Reflection
-default_method = kdend_methods.KDEnDMethod
+#default_method = kdend_methods.KDEnDMethod
+default_method = kde_methods.MultivariateKDE
 
 class KDE(object):
     r"""
@@ -85,6 +87,7 @@ class KDE(object):
         self._exog = None
         self._upper = None
         self._lower = None
+        self._axis_type = 'c'
         self._kernel = kernels.normal_kernel()
 
         self._bw = None
@@ -100,7 +103,7 @@ class KDE(object):
         self.exog = exog
 
         if self._bw is None and self._covariance is None:
-            self.bandwidth = bandwidths.scotts_bandwidth
+            self.bandwidth = bandwidths.MultivariateBandwidth()
 
         if self._method is None:
             self.method = default_method
@@ -117,13 +120,29 @@ class KDE(object):
         return res
 
     @property
+    def axis_type(self):
+        return self._axis_type
+
+    @axis_type.setter
+    def axis_type(self, value):
+        value = [ v.lower() for v in value ]
+        if any(v not in 'ouc' for v in value):
+            raise ValueError("Error, axis type must be one of 'o', 'u' or 'c'")
+        self._axis_type = np.array(value)
+
+    @property
     def exog(self):
         return self._exog
 
     @exog.setter
     def exog(self, xs):
-        self._exog = atleast_2df(xs)
+        self._exog = atleast_2df(xs).astype(float)
         assert self._exog.ndim == 2, "The attribute 'exog' must be a two-dimension array"
+        naxis = len(self._axis_type)
+        if naxis > self.ndim:
+            self.axis_type = self.axis_type[:self.ndim]
+        elif naxis < self.ndim:
+            self.axis_type = np.concatenate(self.axis_type + ['c']*(self.ndim - naxis))
 
     @property
     def kernel(self):

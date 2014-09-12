@@ -6,7 +6,7 @@ gcc -shared -pthread -fPIC -fwrapv -O2 -Wall -fno-strict-aliasing -I/usr/include
 cimport cython
 cimport numpy as np
 import numpy as np
-from libc.math cimport floor, fmod
+from libc.math cimport floor, fmod, round
 
 ctypedef np.float64_t DOUBLE
 ctypedef np.int_t INT
@@ -16,10 +16,10 @@ DEF REFLECTED = 1
 DEF CYCLIC = 2
 DEF NON_CONTINUOUS = 3
 
-cdef object bin_type_map = dict(B=BOUNDED,
-                                R=REFLECTED,
-                                C=CYCLIC,
-                                N=NON_CONTINUOUS)
+cdef object bin_type_map = dict(b=BOUNDED,
+                                r=REFLECTED,
+                                c=CYCLIC,
+                                n=NON_CONTINUOUS)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -35,8 +35,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         int nobs = X.shape[0]
         int M = grid.shape[0]
         np.ndarray[DOUBLE] mesh
-        double delta = (b - a) / M
-        double inv_delta = 1 / delta
+        double delta
         double shift
         double rem
         double val, dval
@@ -58,17 +57,20 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         shift = -a-delta/2
         lower = 0
         upper = M
+        delta = (b - a) / M
     elif bin_type == NON_CONTINUOUS:
         shift = -a
         lower = 0
         upper = M-1
+        delta = (b - a) / (M-1)
     else: # REFLECTED of BOUNDED
         shift = -a-delta/2
         lower = -0.5
         upper = M-0.5
+        delta = (b - a) / M
 
     for i in range(nobs):
-        val = (X[i] + shift) * inv_delta
+        val = (X[i] + shift) / delta
         if bin_type == CYCLIC:
             if val < lower:
                 rem = fmod(lower - val, M)
@@ -89,9 +91,13 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
                     val = upper - rem
                 else:
                     val = lower + rem - M
-        else: # BOUNDED or NON_CONTINUOUS
+        elif bin_type == BOUNDED:
             if val < lower or val > upper:
                 continue # Skip this sample
+        else: # NON_CONTINUOUS
+            val = round(val)
+            if val < lower or val > upper:
+                continue
 
         base_idx = <int> floor(val);
         if has_weight:
@@ -168,8 +174,7 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
         Py_ssize_t i
         int nobs = X.shape[0]
         int M = grid.shape[0]
-        double delta = (b - a) / M
-        double inv_delta = 1 / delta
+        double delta
         double shift
         double rem
         double val
@@ -186,12 +191,16 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
     except KeyError as err:
         raise ValueError('Error, invalid bin type: {0}'.format(err.args[0]))
 
+    if bin_type == NON_CONTINUOUS:
+        delta = (b - a)/(M - 1)
+    else:
+        delta = (b - a)/M
     shift = -a
     lower = 0
     upper = M
 
     for i in range(nobs):
-        val = (X[i] + shift) * inv_delta
+        val = (X[i] + shift) / delta
 
         if bin_type == CYCLIC:
             if val < lower:
@@ -213,9 +222,14 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
                     val = upper - rem
                 else:
                     val = lower + rem - M
-        else: # BOUNDED or NON_CONTINUOUS
+        elif bin_type == BOUNDED:
             if val < lower or val > upper:
                 continue # Skip this sample
+        else: # NON_CONTINUOUS
+            val = round(val)
+            if val < lower or val > upper:
+                continue # Skip this sample
+
 
         base_idx = <int> floor(val);
         if has_weight:
@@ -277,16 +291,18 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             raise ValueError("Error, letter '{0}' is invalid. "
                     "bin_types letters must be one of 'U', 'C', 'R' or 'N'".format(s_bin_types[d]))
 
-        delta[d] = (b[d] - a[d]) / M[d]
         if bin_types[d] == CYCLIC:
+            delta[d] = (b[d] - a[d]) / M[d]
             shift[d] = -a[d]-delta[d]/2
             lower[d] = 0
             upper[d] = M[d]
         elif bin_types[d] == NON_CONTINUOUS:
+            delta[d] = (b[d] - a[d]) / (M[d] - 1)
             shift[d] = -a[d]
             lower[d] = 0
             upper[d] = M[d]-1
         else:
+            delta[d] = (b[d] - a[d]) / M[d]
             shift[d] = -a[d]-delta[d]/2
             lower[d] = -0.5
             upper[d] = M[d]-0.5
@@ -316,7 +332,12 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
                         val[d] = upper[d] - rem[d]
                     else:
                         val[d] = lower[d] + rem[d] - M[d]
-            else: # BOUNDED or NON_CONTINUOUS
+            elif bin_types[d] == BOUNDED:
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_out = 1
+                    break
+            else: # NON_CONTINUOUS
+                val[d] = round(val[d])
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_out = 1
                     break
@@ -397,7 +418,6 @@ def fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
         int nobs = X.shape[0]
         object mesh
         double delta[MAX_DIM]
-        double inv_delta[MAX_DIM]
         double shift[MAX_DIM]
         double val[MAX_DIM]
         double lower[MAX_DIM]
@@ -418,8 +438,10 @@ def fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             raise ValueError("Error, letter '{0}' is invalid. "
                     "bin_types letters must be one of 'U', 'C', 'R' or 'N'".format(s_bin_types[d]))
 
-        delta[d] = (b[d] - a[d])/M[d]
-        inv_delta[d] = 1 / delta[d]
+        if bin_types[d] == NON_CONTINUOUS:
+            delta[d] = (b[d] - a[d])/(M[d] - 1)
+        else:
+            delta[d] = (b[d] - a[d])/M[d]
         shift[d] = -a[d]
         lower[d] = 0
         upper[d] = M[d]
@@ -439,9 +461,15 @@ def fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
                         val[d] =  2*lower[d] - val[d]
                     if val[d] > upper[d]:
                         val[d] =  2*upper[d] - val[d]
-            elif val[d] < lower[d] or val[d] > upper[d]:
-                is_in = 0
-                break
+            elif bin_types[d] == BOUNDED:
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_in = 0
+                    break
+            else: # NON_CONTINUOUS
+                val[d] = round(val[d])
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_in = 0
+                    break
         if is_in:
             if has_weight:
                 w = weights[i]

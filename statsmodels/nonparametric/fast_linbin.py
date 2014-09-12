@@ -6,8 +6,8 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
     X = np.atleast_1d(X).astype(float)
     if X.ndim != 1:
         raise ValueError("Error, X must be a 1D array")
-    if not bin_type in ('C', 'R', 'B', 'N'):
-        raise ValueError("Error, bin_type must be one of 'C', 'R', 'B' or 'N'")
+    if not bin_type in ('c', 'r', 'b', 'n'):
+        raise ValueError("Error, bin_type must be one of 'c', 'r', 'b' or 'n'")
     if weights is not None:
         weights = np.asarray(weights, dtype=float)
         if weights.ndim != 1 or weights.shape[0] != X.shape[0]:
@@ -26,7 +26,7 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
 
     return Grid(mesh, bounds, bin_type), out
 
-def fast_linbin(X, bounds, M, weights = None, bin_type = 'B', out = None):
+def fast_linbin(X, bounds, M, weights = None, bin_type = 'b', out = None):
     r"""
     Linear Binning as described in Fan and Marron (1994)
 
@@ -54,10 +54,10 @@ def fast_linbin(X, bounds, M, weights = None, bin_type = 'B', out = None):
     -----
 
     The bin can be:
-        - Bounded ('B')
-        - Reflected ('R')
-        - Cyclic ('C')
-        - Non-Continuous ('N')
+        - Bounded ('b')
+        - Reflected ('r')
+        - Cyclic ('c')
+        - Non-Continuous ('n')
 
     Unless the bin is non-continuous, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions 
     :math:`p_i` and :math:`p_{i+1}`, the bins will be updated as:
@@ -80,7 +80,7 @@ def fast_linbin(X, bounds, M, weights = None, bin_type = 'B', out = None):
     """
     return _fast_bin(_fast_linbin.fast_linbin, X, bounds, M, weights, bin_type, out)
 
-def fast_bin(X, bounds, M, weights = None, bin_type='B'):
+def fast_bin(X, bounds, M, weights = None, bin_type='b'):
     """
     Fast binning in 1D
 
@@ -144,7 +144,7 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
     mesh, bounds = fct(X, bounds[:,0], bounds[:,1], out, weights, bin_types)
     return Grid(mesh, bounds, bin_types), out
 
-def fast_linbin_nd(X, bounds, M, weights=None, bin_types='B', out=None):
+def fast_linbin_nd(X, bounds, M, weights=None, bin_types='b', out=None):
     r"""
     Linear Binning in nD as described in Fan and Marron (1994)
 
@@ -172,10 +172,10 @@ def fast_linbin_nd(X, bounds, M, weights=None, bin_types='B', out=None):
     -----
 
     The bin can be:
-        - Bounded ('B')
-        - Reflected ('R')
-        - Cyclic ('C')
-        - Non-Continuous ('N')
+        - Bounded ('b')
+        - Reflected ('r')
+        - Cyclic ('c')
+        - Non-Continuous ('n')
 
     Unless the bin is non-continuous, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions 
     :math:`p_i` and :math:`p_{i+1}`, the bins will be updated as:
@@ -199,7 +199,7 @@ def fast_linbin_nd(X, bounds, M, weights=None, bin_types='B', out=None):
     return _fast_bin_nd(_fast_linbin.fast_linbin_nd, X, bounds, M, weights, bin_types, out)
 
 
-def fast_bin_nd(X, bounds, M, weights=None, bin_types='B', out=None):
+def fast_bin_nd(X, bounds, M, weights=None, bin_types='b', out=None):
     r"""
     Simple Binning in nD
 
