@@ -289,7 +289,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             bin_types[d] = bin_type_map[s_bin_types[d]]
         except KeyError as err:
             raise ValueError("Error, letter '{0}' is invalid. "
-                    "bin_types letters must be one of 'U', 'C', 'R' or 'N'".format(s_bin_types[d]))
+                    "bin_types letters must be one of 'u', 'c', 'r' or 'n'".format(s_bin_types[d]))
 
         if bin_types[d] == CYCLIC:
             delta[d] = (b[d] - a[d]) / M[d]

@@ -151,6 +151,57 @@ class botev_bandwidth(object):
 
         return np.sqrt(t_star) * span
 
+class KDE1DAdaptor(object):
+    """
+    Adaptor class to view a nD KDE estimator as a 1D estimator for a given dimension
+    """
+    def __init__(self, kde, axis=None):
+        self._axis = axis
+        self._kde = kde
+
+    @property
+    def axis(self):
+        return self._axis
+
+    @axis.setter
+    def axis(self, val):
+        val = int(val)
+        if val < 0 or val >= self._kde.ndim:
+            raise ValueError("Error, invalid axis")
+        self._axis = val
+
+    @property
+    def ndim(self):
+        return 1
+
+    def fit(self):
+        raise NotImplementedError()
+
+    @property
+    def exog(self):
+        return self._kde.exog[..., self._axis]
+
+    _list_attributes = ['lower', 'upper', 'axis_type', 'kernel']
+
+    _constant_attributes = ['weights', 'adjust', 'total_weights', 'bandwidth', 'npts']
+
+def _add_fwd_list_attr(cls, attr):
+    def getter(self):
+        return getattr(self._kde, attr)[self._axis]
+    setattr(cls, attr, property(getter))
+
+def _add_fwd_attr(cls, attr):
+    def getter(self):
+        return getattr(self._kde, attr)
+    setattr(cls, attr, property(getter))
+
+for attr in KDE1DAdaptor._list_attributes:
+    _add_fwd_list_attr(KDE1DAdaptor, attr)
+
+for attr in KDE1DAdaptor._constant_attributes:
+    _add_fwd_attr(KDE1DAdaptor, attr)
+
+
 class MultivariateBandwidth(object):
     def __init__(self):
         self.continuous = scotts_bandwidth
@@ -159,21 +210,29 @@ class MultivariateBandwidth(object):
 
     def __call__(self, model):
         res = np.zeros(model.ndim, dtype=float)
-        c = model.axis_type == 'c'
-        o = model.axis_type == 'o'
-        u = model.axis_type == 'u'
+        c = np.nonzero(model.axis_type == 'c')[0]
+        o = np.nonzero(model.axis_type == 'o')[0]
+        u = np.nonzero(model.axis_type == 'u')[0]
+        adapt = KDE1DAdaptor(model)
         if callable(self.continuous):
-            res[c] = self.continuous(model.exog[..., c])
+            for d in c:
+                adapt.axis = d
+                res[d] = self.continuous(adapt)
         else:
             res[c] = self.continuous
         if callable(self.ordered):
-            res[o] = self.ordered(model.exog[..., o])
+            for d in c:
+                adapt.axis = d
+                res[d] = self.ordered(adapt)
         else:
             res[o] = self.ordered
         if callable(self.unordered):
-            res[u] = self.unordered(model.exog[...,u])
+            for d in c:
+                adapt.axis = d
+                res[d] = self.unordered(adapt)
         else:
             res[u] = self.unordered
+        return res
 
 from .bw_crossvalidation import leastsquare_cv_bandwidth
 

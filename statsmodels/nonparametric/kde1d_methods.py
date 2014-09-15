@@ -42,7 +42,7 @@ from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D
 from .grid_interpolation import GridInterpolator
-from .kde_methods import KDEMethod
+from .kde_methods import KDEMethod, AxesType
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -156,7 +156,12 @@ class KDE1DMethod(KDEMethod):
 
     @property
     def axis_type(self):
-        return 'c'
+        return AxesType('c')
+
+    @axis_type.setter
+    def axis_type(self, value):
+        if value != 'c':
+            raise ValueError('Error, this method can only be used for 1D continuous axis')
 
     @property
     def bin_type(self):
@@ -177,7 +182,6 @@ class KDE1DMethod(KDEMethod):
             self._upper = float(self._lower)
         except:
             self._upper = np.inf
-
 
     def fit(self, compute_bandwidth=True):
         """

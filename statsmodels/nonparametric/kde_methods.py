@@ -9,8 +9,8 @@ import numpy as np
 from copy import copy as shallow_copy
 from .fast_linbin import fast_linbin as fast_bin
 from . import kernels
-from . import kde1d_methods, kdenc_methods, bandwidths
 from .kde_utils import numpy_trans_method, atleast_2df
+from . import bandwidths
 
 class AxesType(object):
     _valid_types = 'cou'
@@ -20,7 +20,7 @@ class AxesType(object):
         self.set(value)
 
     def set(self, value):
-        value = list(value)
+        value = np.array(list(value), dtype=self._types.dtype)
         if any(v not in AxesType._valid_types for v in value):
             raise ValueError("Error, an axis type must be one of 'c', 'o' or 'u'")
         self._types = value
@@ -64,8 +64,18 @@ class AxesType(object):
         if nl < cur_l:
             self._types = self._types[nl:]
         elif nl > cur_l:
-            self._types = np.resize(nl)
+            self._types = np.resize(self._types, nl)
             self._types[cur_l:] = default
+
+    def __eq__(self, other):
+        if isinstance(other, AxesType):
+            return self._types == other._types
+        return self._types == other
+
+    def __ne__(self, other):
+        if isinstance(other, AxesType):
+            return self._types != other._types
+        return self._types != others
 
 
 class KDEMethod(object):
@@ -75,14 +85,14 @@ class KDEMethod(object):
     Although inheriting from it is not required, it is recommended as it will provide quite a few useful services.
     """
     def __init__(self):
-        self._exog = None
-        self._upper = None
-        self._lower = None
+        self._exog = np.empty((0,1), dtype=float)
+        self._upper = np.empty((0,), dtype=float)
+        self._lower = np.empty((0,), dtype=float)
         self._axis_type = AxesType('c')
         self._kernel = kernels.normal_kernel()
         self._bandwidth = bandwidths.MultivariateBandwidth()
-        self._weights = 1.
-        self._adjust = 1.
+        self._weights = np.array(1.)
+        self._adjust = np.array(1.)
         self._total_weights = None
         self._fitted = False
 
@@ -93,10 +103,11 @@ class KDEMethod(object):
         self._exog = atleast_2df(other.exog)
         self._upper = np.atleast_1d(other.upper).copy()
         self._lower = np.atleast_1d(other.lower).copy()
-        self._axis_type = other.axis_type.copy()
+        self._axis_type.set(other.axis_type)
         self._bandwidth = other.bandwidth
         self._weights = other.weights
         self._adjust = other.adjust
+        return self
 
     @property
     def exog(self):
@@ -112,17 +123,21 @@ class KDEMethod(object):
         if self._fitted:
             self._exog = value.reshape(self._exog.shape)
         else:
-            npts = self.npts
+            ndim = 1 if np.isscalar(self._lower) else len(self._lower)
             self._exog = value
-            if npts != self.npts:
+            if self._exog.shape[1] != self.ndim:
+                raise ValueError("Error, this method cannot handle problems in {0} dimensions".format(self._exog.shape[1]))
+            if ndim != self.ndim:
                 self._axis_type.resize(self.ndim)
-                if npts > self.npts:
-                    self._lower = self._lower[:self.npts]
-                    self._upper = self._upper[:self.npts]
+                if ndim > self.ndim:
+                    self._lower = self._lower[:self.ndim]
+                    self._upper = self._upper[:self.ndim]
                 else:
-                    diff = self.npts - npts
+                    diff = self.ndim - ndim
                     self._lower = np.concatenate([self._lower, [-np.inf]*diff])
                     self._upper = np.concatenate([self._upper, [np.inf]*diff])
+            if self._weights.ndim == 0:
+                self._total_weights = self._exog.shape[0]
 
     @property
     def ndim(self):

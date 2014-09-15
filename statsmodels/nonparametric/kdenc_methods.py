@@ -10,6 +10,7 @@ from . import kernelsnc
 from .kde_utils import numpy_trans1d_method, finite
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
+from .kde_methods import KDEMethod
 
 def _compute_bandwidth(kde):
     """
@@ -25,8 +26,9 @@ def _compute_bandwidth(kde):
     raise ValueError("Bandwidth needs to be specified")
 
 
-class UnorderedKDE(object):
+class UnorderedKDE(KDEMethod):
     def __init__(self):
+        KDEMethod.__init__(self)
         self._exog = None
         self._num_levels = None
         self._weights = None
@@ -38,6 +40,11 @@ class UnorderedKDE(object):
     def axis_type(self):
         return 'u'
 
+    @axis_type.setter
+    def axis_type(self, value):
+        if value != 'u':
+            raise ValueError('Error, this method can only be used for discrete unordered axis')
+
     @property
     def bin_type(self):
         return 'u'
@@ -46,25 +53,23 @@ class UnorderedKDE(object):
     def to_bin(self):
         return self._exog
 
-    def fit(self, kde, compute_bandwidth=True):
-        if kde.ndim != 1:
-            raise ValueError("Error, this is a 1D method, expecting a 1D problem")
-        if kde.axis_type != self.axis_type:
-            raise ValueError("Error, incompatible method for the type of axis")
+    def fit(self, compute_bandwidth=True):
         fitted = self.copy()
+        fitted._fitted = True
         if compute_bandwidth:
-            fitted._bw = _compute_bandwidth(kde)
-        fitted._exog = kde.exog.reshape((kde.npts,))
-        if not finite(kde.upper):
+            fitted._bw = _compute_bandwidth(self)
+        if not finite(self.upper):
             fitted._num_levels = int(fitted._exog.max())+1
         else:
-            fitted._num_levels = int(kde.upper)+1
+            fitted._num_levels = int(self.upper)+1
         if fitted._num_levels <= 2:
             raise ValueError("Error, there must be at least two levels for this method")
-        fitted._kernel = kde.kernel.for_ndim(1)
-        fitted._weights = kde.weights
-        fitted._adjust = kde.adjust
-        fitted._total_weights = kde.total_weights
+        fitted._kernel = self.kernel.for_ndim(1)
+        if fitted._total_weights is None:
+            if fitted.weights.ndim > 0:
+                fitted._total_weights = fitted.weights.sum()
+            else:
+                fitted._total_weights = float(fitted.npts)
         return fitted
 
     def copy(self):
@@ -153,7 +158,12 @@ class UnorderedKDE(object):
 
     @exog.setter
     def exog(self, value):
-        value = np.atleast_1d(value).reshape(self._exog.shape)
+        if self._fitted:
+            value = np.atleast_1d(value).reshape(self._exog.shape)
+        else:
+            value = np.atleast_1d(value).squeeze()
+            if value.ndim > 1:
+                raise ValueError("Error, the exog data points must be 1D")
         self._exog = value
 
     @property
@@ -180,6 +190,10 @@ class UnorderedKDE(object):
         if val.shape:
             val = val.reshape(self._exog.shape)
             self._weights = val
+            self._total_weights = val.sum()
+        else:
+            self._weights = np.asarray(1.)
+            self._total_weights = None
 
     @property
     def total_weights(self):
@@ -203,9 +217,21 @@ class UnorderedKDE(object):
     def lower(self):
         return 0
 
+    @lower.setter
+    def lower(self, value):
+        pass # Ignore
+
     @property
     def upper(self):
-        return self.num_levels-1
+        if self.num_levels:
+            return self.num_levels-1
+        return np.inf
+
+    @upper.setter
+    def upper(self, value):
+        if finite(value):
+            self._num_levels = int(value)+1
+        self._num_levels = None
 
     @numpy_trans1d_method()
     def pdf(self, points, out):
@@ -245,6 +271,11 @@ class OrderedKDE(UnorderedKDE):
     @property
     def axis_type(self):
         return 'o'
+
+    @axis_type.setter
+    def axis_type(self, value):
+        if value != 'o':
+            raise ValueError('Error, this method can only be used for discrete ordered axis')
 
     @property
     def bin_type(self):

@@ -106,7 +106,7 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     No checks are made to ensure the consistency of the input!
     """
     R = upper - lower
-    mesh, DataHist = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='C')
+    mesh, DataHist = fast_bin_nd(exog, np.c_[lower, upper], N, weights=weights, bin_types='c')
     DataHist /= total_weights * mesh.start_volume
     FFTData = np.fft.rfftn(DataHist)
 
@@ -175,15 +175,13 @@ class KDEnDMethod(KDEMethod):
         """
         ndim = self.ndim
         if ndim == 1 and type(self) == KDEnDMethod:
-            method = kde1d_methods.Reflection()
-            return method.fit(self, compute_bandwidth)
+            method = kde1d_methods.Reflection().set_from(self)
+            return method.fit(compute_bandwidth)
         npts = self.npts
         fitted = self.copy()
-        fitted._exog = self.exog
+        fitted._fitted = True
         assert self.upper.shape == (ndim,)
-        fitted._upper = self.upper
         assert self.lower.shape == (ndim,)
-        fitted._lower = self.lower
         fitted._kernel = self.kernel.for_ndim(ndim)
         assert self.weights.ndim == 0 or self.weights.shape == (npts,)
         fitted._weights = self.weights
@@ -209,27 +207,30 @@ class KDEnDMethod(KDEMethod):
         Unlike the bandwidth for the KDE, this must be an actual value and not 
         a method.
         """
-        return self._bw
+        return self._bandwidth
 
     @bandwidth.setter
     def bandwidth(self, bw):
-        bw = np.asarray(bw).squeeze()
-        if bw.ndim == 0:
-            inv_bw = 1/bw
-            det_inv_bw = inv_bw**self.ndim
-        elif bw.ndim == 1:
-            assert bw.shape[0] == self.ndim
-            inv_bw = 1 / bw
-            det_inv_bw = np.product(inv_bw)
-        elif bw.ndim == 2:
-            assert bw.shape == (self.ndim, self.ndim)
-            inv_bw = linalg.inv(bw)
-            det_inv_bw = linalg.det(inv_bw)
+        if self._fitted:
+            bw = np.asarray(bw).squeeze()
+            if bw.ndim == 0:
+                inv_bw = 1/bw
+                det_inv_bw = inv_bw**self.ndim
+            elif bw.ndim == 1:
+                assert bw.shape[0] == self.ndim
+                inv_bw = 1 / bw
+                det_inv_bw = np.product(inv_bw)
+            elif bw.ndim == 2:
+                assert bw.shape == (self.ndim, self.ndim)
+                inv_bw = linalg.inv(bw)
+                det_inv_bw = linalg.det(inv_bw)
+            else:
+                raise ValueError("Error, specified bandiwdth has more than 2 dimension")
+            self._bandwidth = bw
+            self._inv_bw = inv_bw
+            self._det_inv_bw = det_inv_bw
         else:
-            raise ValueError("Error, specified bandiwdth has more than 2 dimension")
-        self._bandwidth = bw
-        self._inv_bw = inv_bw
-        self._det_inv_bw = det_inv_bw
+            self._bandwidth = bw
 
     @property
     def inv_bandwidth(self):
@@ -405,9 +406,9 @@ class KDEnDMethod(KDEMethod):
 class Cyclic(KDEnDMethod):
     def fit(self, compute_bandwidth = True):
         if self.ndim == 1:
-            cyc = kde1d_methods.Cyclic()
-            return cyc.fit(self, compute_bandwidth)
-        return super(Cyclic, self).fit(self, compute_bandwidth)
+            cyc = kde1d_methods.Cyclic().set_from(self)
+            return cyc.fit(compute_bandwidth)
+        return super(Cyclic, self).fit(compute_bandwidth)
 
     @numpy_trans_method('ndim', 1)
     def pdf(self, points, out):

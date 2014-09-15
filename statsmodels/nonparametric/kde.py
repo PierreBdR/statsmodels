@@ -57,15 +57,15 @@ Silverman, B.W.  Density Estimation for Statistics and Data Analysis.
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from . import kernels, bandwidths
-from . import kde1d_methods
-from . import kdend_methods
-from . import kde_methods
+from .kde_methods import KDEMethod
+from . import kde1d_methods, kdend_methods, kdend_methods
+from . import kde_multivariate
 from .kde_utils import atleast_2df
 from ..compat.python import string_types
 
 #default_method = kde1d_methods.Reflection
 #default_method = kdend_methods.KDEnDMethod
-default_method = kde_methods.MultivariateKDE
+default_method = kde_multivariate.MultivariateKDE
 
 class KDE(object):
     r"""
@@ -86,8 +86,9 @@ class KDE(object):
     """
     def __init__(self, exog, method=None, **kwords):
 
+        self._method = None
         if method is None:
-            self.method = default_method.copy()
+            self.method = default_method
         else:
             self.method = method
 
@@ -122,7 +123,8 @@ class KDE(object):
             self._method = m()
         else:
             self._method = m
-        self._method.set_from(old_method)
+        if old_method is not None:
+            self._method.set_from(old_method)
 
     def fit(self):
         """
@@ -136,11 +138,11 @@ class KDE(object):
 
 def _fwd_to_method(cls, attr, read=True, write=False, delete=False):
     def getter(self):
-        return getattr(cls._method, attr)
+        return getattr(self._method, attr)
     def setter(self, value):
-        setattr(cls._method, attr, value)
+        setattr(self._method, attr, value)
     def deleter(self):
-        delattr(cls._method, attr)
+        delattr(self._method, attr)
     if not read:
         getter = None
     if not write:
@@ -154,3 +156,4 @@ for attr in KDE._rw_attrs:
     _fwd_to_method(KDE, attr, True, True)
 for attr in KDE._rwd_attrs:
     _fwd_to_method(KDE, attr, True, True, True)
+

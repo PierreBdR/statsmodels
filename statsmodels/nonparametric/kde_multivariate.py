@@ -11,77 +11,16 @@ from .fast_linbin import fast_linbin as fast_bin
 from . import kernels, kernelsnc
 from . import kde1d_methods, kdenc_methods, bandwidths
 from .kde_utils import numpy_trans_method
+from .kde1d_methods import KDEMethod
 
-class KDEAdaptor(object):
-    def __init__(self, kde, bws, kernels, axis=None):
-        self._axis = axis
-        self._kde = kde
-        self._kernels = kernels
-        self._bw = bws
-
-    @property
-    def axis(self):
-        return self._axis
-
-    @axis.setter
-    def axis(self, val):
-        val = int(val)
-        if val < 0 or val >= self._kde.ndim:
-            raise ValueError("Error, invalid axis")
-        self._axis = val
-
-    @property
-    def bandwidth(self):
-        return self._bw[self._axis]
-
-    @property
-    def kernel(self):
-        return self._kernels[self._axis]
-
-    @property
-    def bandwidth(self):
-        return self._bws[self._axis]
-
-    @property
-    def ndim(self):
-        return 1
-
-    def fit(self):
-        raise NotImplementedError()
-
-    _array_attributes = ['lower', 'upper', 'exog', 'axis_type']
-
-    _constant_attributes = ['weights', 'adjust', 'total_weights', 'npts']
-
-def _add_fwd_array_attr(cls, attr):
-    def getter(self):
-        return getattr(self._kde, attr)[..., self._axis]
-    setattr(cls, attr, property(getter))
-
-def _add_fwd_attr(cls, attr):
-    def getter(self):
-        return getattr(self._kde, attr)
-    setattr(cls, attr, property(getter))
-
-for attr in KDEAdaptor._array_attributes:
-    _add_fwd_array_attr(KDEAdaptor, attr)
-
-for attr in KDEAdaptor._constant_attributes:
-    _add_fwd_attr(KDEAdaptor, attr)
-
-class MultivariateKDE(object):
+class MultivariateKDE(KDEMethod):
     """
     This class works as an adaptor for various 1D methods to work together.
     """
     def __init__(self, **kwords):
-        self._exog = None
+        KDEMethod.__init__(self)
         self._methods = {}
-        self._weights = None
-        self._total_weights = None
-        self._bw = None
-        self._adjust = None
         self._kernels = {}
-        self._axis_type = None
         self._kernels_type = dict(c=kernels.normal_kernel1d(),
                                   o=kernelsnc.WangRyzin(),
                                   u=kernelsnc.AitchisonAitken())
@@ -96,24 +35,6 @@ class MultivariateKDE(object):
 
     def copy(self):
         return shallow_copy(self)
-
-    @property
-    def axis_type(self):
-        """
-        String defining the kind of axis, it must be composed of the letters:
-            c - continuous
-            o - ordered (discrete)
-            u - unordered (discrete)
-        """
-        return self._axis_type
-
-    @property
-    def axis_type(self):
-        return self._axis_type
-
-    @property
-    def methods(self):
-        return self._methods
 
     @property
     def kernels(self):
@@ -173,10 +94,6 @@ class MultivariateKDE(object):
         return self._exog.shape[1]
 
     @property
-    def bandwidth(self):
-        return self._bw
-
-    @property
     def lower(self):
         return self._lower
 
@@ -202,39 +119,57 @@ class MultivariateKDE(object):
                 k[i] = self._kernels_type[t].for_ndim(1)
         return m, k
 
-    def fit(self, kde):
-        methods, kernels = self.get_methods(kde.axis_type)
-        if kde.ndim == 1:
-            return methods[0].fit(kde)
-        if callable(kde.bandwidth):
-            bw = kde.bandwidth(kde)
+    @property
+    def methods(self):
+        return self._methods
+
+    def fit(self):
+        methods, kernels = self.get_methods(self.axis_type)
+        if self.ndim == 1:
+            return methods[0].set_from(self).fit()
+        if callable(self.bandwidth):
+            bw = self.bandwidth(self)
         else:
-            bw = np.atleast_1d(kde.bandwidth)
-        if bw.shape != (kde.ndim,):
+            bw = np.atleast_1d(self.bandwidth)
+        if bw.shape != (self.ndim,):
             raise ValueError("There should be one bandwidth per dimension")
-        k = KDEAdaptor(kde, bw, kernels)
         fitted = self.copy()
         fitted._bw = bw
-        fitted._methods = methods
-        fitted._axis_type = kde.axis_type
+        fitted._axis_type = self.axis_type
         fitted._kernels = kernels
-        fitted._exog = kde.exog
-        k._bw = bw
-        for i, m in enumerate(methods):
-            k.axis = i
-            fitted.methods[i] = m.fit(k)
+        fitted._exog = self.exog
+        if callable(self.bandwidth):
+            bw = self.bandwidth(self)
+        else:
+            bw = self.bandwidth
+        bw = np.atleast_1d(bw).astype(float)
+        if bw.shape != (fitted.ndim,):
+            raise ValueError("Error, the bandwidth must contain {} values".format(self.ndim))
+        self._bandwidth = bw
+        for d, m in enumerate(methods):
+            m.bandwidth = bw[d]
+            m.kernel = kernels[d]
+            m.lower = self.lower[d]
+            m.upper = self.upper[d]
+            m.axis_type = self.axis_type[d]
+            m.exog = self.exog[...,d]
+            m.weights = self.weights
+            m.adjust = self.adjust
+            f = m.fit()
+            methods[d] = f
+        fitted._methods = methods
         fitted._lower = np.array([m.lower for m in fitted.methods])
         fitted._upper = np.array([m.upper for m in fitted.methods])
         fitted._bin_data = np.concatenate([m.to_bin[:,None] for m in fitted.methods], axis=1)
-        fitted._weights = kde.weights
-        fitted._adjust = kde.adjust
-        fitted._total_weights = kde.total_weights
+        fitted._weights = self.weights
+        fitted._adjust = self.adjust
+        fitted._total_weights = self.total_weights
         return fitted
 
     @numpy_trans_method('ndim', 1)
     def pdf(self, points, out):
         full_out = np.empty_like(points)
         for i in range(self.ndim):
-            self._methods[i].pdf(points, out=full_out[...,i], dims=i)
+            self._methods[i].pdf(points, out=full_out, dims=i)
         np.prod(full_out, axis=1, out=out)
         return out

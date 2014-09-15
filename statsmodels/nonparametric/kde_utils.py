@@ -110,7 +110,7 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
         z = z.T
     return z, write_out, out
 
-def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=None):
+def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=float):
     """
     Decorator to create a function taking a single array-like argument and return a numpy array with the same number of 
     points.
@@ -233,7 +233,7 @@ def numpy_trans1d(out_dtype=None, in_dtype=None):
         return f
     return decorator
 
-def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=None):
+def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=float):
     """
     Decorator to create a method taking a single array-like argument and return a numpy array with the same number of 
     points.

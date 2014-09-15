@@ -125,7 +125,7 @@ class WangRyzin(object):
             dx.shape = (1,)
         if out is None:
             out = np.empty_like(dx)
-        out[...] = (1 - bw)/2 * bw**(dx.abs())
+        out[...] = (1 - bw)/2 * bw**abs(dx)
         out[dx == 0] = 1 - bw
         return out
 
