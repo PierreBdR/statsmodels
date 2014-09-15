@@ -8,233 +8,278 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from copy import copy as shallow_copy
 from .fast_linbin import fast_linbin as fast_bin
-from . import kernels, kernelsnc
+from . import kernels
 from . import kde1d_methods, kdenc_methods, bandwidths
-from .kde_utils import numpy_trans_method
+from .kde_utils import numpy_trans_method, atleast_2df
 
-class KDEAdaptor(object):
-    def __init__(self, kde, bws, kernels, axis=None):
-        self._axis = axis
-        self._kde = kde
-        self._kernels = kernels
-        self._bw = bws
+class AxesType(object):
+    _valid_types = 'cou'
+    _dtype = np.dtype(np.str_).char+'1'
+    def __init__(self, value='c'):
+        self._types = np.empty((), dtype=self._dtype)
+        self.set(value)
 
-    @property
-    def axis(self):
-        return self._axis
-
-    @axis.setter
-    def axis(self, val):
-        val = int(val)
-        if val < 0 or val >= self._kde.ndim:
-            raise ValueError("Error, invalid axis")
-        self._axis = val
-
-    @property
-    def bandwidth(self):
-        return self._bw[self._axis]
-
-    @property
-    def kernel(self):
-        return self._kernels[self._axis]
-
-    @property
-    def bandwidth(self):
-        return self._bws[self._axis]
-
-    @property
-    def ndim(self):
-        return 1
-
-    def fit(self):
-        raise NotImplementedError()
-
-    _array_attributes = ['lower', 'upper', 'exog', 'axis_type']
-
-    _constant_attributes = ['weights', 'adjust', 'total_weights', 'npts']
-
-def _add_fwd_array_attr(cls, attr):
-    def getter(self):
-        return getattr(self._kde, attr)[..., self._axis]
-    setattr(cls, attr, property(getter))
-
-def _add_fwd_attr(cls, attr):
-    def getter(self):
-        return getattr(self._kde, attr)
-    setattr(cls, attr, property(getter))
-
-for attr in KDEAdaptor._array_attributes:
-    _add_fwd_array_attr(KDEAdaptor, attr)
-
-for attr in KDEAdaptor._constant_attributes:
-    _add_fwd_attr(KDEAdaptor, attr)
-
-class MultivariateKDE(object):
-    """
-    This class works as an adaptor for various 1D methods to work together.
-    """
-    def __init__(self, **kwords):
-        self._exog = None
-        self._methods = {}
-        self._weights = None
-        self._total_weights = None
-        self._bw = None
-        self._adjust = None
-        self._kernels = {}
-        self._axis_type = None
-        self._kernels_type = dict(c=kernels.normal_kernel1d(),
-                                  o=kernelsnc.WangRyzin(),
-                                  u=kernelsnc.AitchisonAitken())
-        self._methods_type = dict(c=kde1d_methods.Reflection(),
-                                  o=kdenc_methods.OrderedKDE(),
-                                  u=kdenc_methods.UnorderedKDE())
-        for k in kwords:
-            if hasattr(self, k):
-                setattr(self, k, kwords[k])
-            else:
-                raise ValueError("Error, unknown attribute '{}'".format(k))
+    def set(self, value):
+        value = list(value)
+        if any(v not in AxesType._valid_types for v in value):
+            raise ValueError("Error, an axis type must be one of 'c', 'o' or 'u'")
+        self._types = value
 
     def copy(self):
-        return shallow_copy(self)
+        return AxesType(self)
 
-    @property
-    def axis_type(self):
+    def __len__(self):
+        return len(self._types)
+
+    def __repr__(self):
+        return "AxesType('{}')".format(''.join(self._types))
+
+    def __str__(self):
+        return ''.join(self._types)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return ''.join(self._types[idx])
+        return self._types[idx]
+
+    def __iter__(self):
+        return iter(self._types)
+
+    def __setitem__(self, idx, value):
+        if isinstance(idx, slice):
+            value = list(value)
+            if any(v not in AxesType._valid_types for v in value):
+                raise ValueError("Error, invalid axis type: '{}'".format(''.join(value)))
+            self._types[idx] = value
+        else:
+            if value not in AxesType._valid_types:
+                raise ValueError("Error, invalid axis type: '{}'".format(value))
+            self._types[idx] = value
+
+    def __delitem__(self, idx):
+        del self._types[idx]
+
+    def resize(self, nl, default='c'):
+        cur_l = len(self)
+        if nl < cur_l:
+            self._types = self._types[nl:]
+        elif nl > cur_l:
+            self._types = np.resize(nl)
+            self._types[cur_l:] = default
+
+
+class KDEMethod(object):
+    """
+    This is the base class for KDE methods.
+
+    Although inheriting from it is not required, it is recommended as it will provide quite a few useful services.
+    """
+    def __init__(self):
+        self._exog = None
+        self._upper = None
+        self._lower = None
+        self._axis_type = AxesType('c')
+        self._kernel = kernels.normal_kernel()
+        self._bandwidth = bandwidths.MultivariateBandwidth()
+        self._weights = 1.
+        self._adjust = 1.
+        self._total_weights = None
+        self._fitted = False
+
+    def set_from(self, other):
         """
-        String defining the kind of axis, it must be composed of the letters:
-            c - continuous
-            o - ordered (discrete)
-            u - unordered (discrete)
+        Copy the values from a different method.
         """
-        return self._axis_type
+        self._exog = atleast_2df(other.exog)
+        self._upper = np.atleast_1d(other.upper).copy()
+        self._lower = np.atleast_1d(other.lower).copy()
+        self._axis_type = other.axis_type.copy()
+        self._bandwidth = other.bandwidth
+        self._weights = other.weights
+        self._adjust = other.adjust
 
     @property
-    def axis_type(self):
-        return self._axis_type
+    def exog(self):
+        """
+        ndarray
+            Exogenous data set. Its shape is NxD for N points in D dimension.
+        """
+        return self._exog
 
-    @property
-    def methods(self):
-        return self._methods
-
-    @property
-    def kernels(self):
-        return self._kernels
-
-    @property
-    def continuous_method(self):
-        return self._methods_type['c']
-
-    @continuous_method.setter
-    def continuous_method(self, m):
-        self._methods_type['c'] = m
-
-    @property
-    def ordered_method(self):
-        return self._methods_type['o']
-
-    @ordered_method.setter
-    def ordered_method(self, m):
-        self._methods_type['o'] = m
-
-    @property
-    def unordered_method(self):
-        return self._methods_type['u']
-
-    @unordered_method.setter
-    def unordered_method(self, m):
-        self._methods_type['u'] = m
-
-    @property
-    def adjust(self):
-        return self._adjust
-
-    @adjust.setter
-    def adjust(self, val):
-        try:
-            self._adjust = np.asarray(float(val))
-        except TypeError:
-            val = np.atleast_1d(val).astype(float)
-            if val.shape != (self.npts,):
-                raise ValueError("Error, adjust must be a single value or a value per point")
-            self._adjust = val
-        if self._methods:
-            for m in self._methods:
-                m.adjust = self._adjust
-
-    @adjust.deleter
-    def adjust(self):
-        self.adjust = np.asarray(1.)
-
-    @property
-    def npts(self):
-        return self._exog.shape[0]
+    @exog.setter
+    def exog(self, value):
+        value = atleast_2df(value).astype(float)
+        if self._fitted:
+            self._exog = value.reshape(self._exog.shape)
+        else:
+            npts = self.npts
+            self._exog = value
+            if npts != self.npts:
+                self._axis_type.resize(self.ndim)
+                if npts > self.npts:
+                    self._lower = self._lower[:self.npts]
+                    self._upper = self._upper[:self.npts]
+                else:
+                    diff = self.npts - npts
+                    self._lower = np.concatenate([self._lower, [-np.inf]*diff])
+                    self._upper = np.concatenate([self._upper, [np.inf]*diff])
 
     @property
     def ndim(self):
+        """
+        int
+            Number of dimensions of the problem
+        """
         return self._exog.shape[1]
 
     @property
+    def npts(self):
+        """
+        int
+        Number of points in the exogenous dataset.
+        """
+        return self._exog.shape[0]
+
+    @property
+    def kernel(self):
+        r"""
+        Kernel class. This must be an object modeled on :py:class:`kernels.Kernels` or on :py:class:`kernels.Kernel1D`
+        for 1D kernels. It is recommended to inherit one of these classes to provide numerical approximation for all
+        methods.
+
+        By default, the kernel class is :py:class:`pyqt_fit.kernels.normal_kernel`
+        """
+        return self._kernel
+
+    @kernel.setter
+    def kernel(self, k):
+        self._kernel = k
+
+    @property
+    def axis_type(self):
+        """
+        AxesType
+            Type of each axis. Each axis type is defined by a letter:
+                - c for continuous
+                - u for unordered (discrete)
+                - o for ordered (discrete)
+        """
+        return self._axis_type
+
+    @axis_type.setter
+    def axis_type(self, value):
+        self._axis_type.set(value)
+
+    @axis_type.deleter
+    def axis_type(self):
+        self._axis_type[:] = 'c'
+
+    @property
     def bandwidth(self):
-        return self._bw
+        """
+        Bandwidth of the kernel.
+        Can be set either as a fixed value or using a bandwidth calculator,
+        that is a function of signature ``w(model)`` that returns the bandwidth.
+
+        See the actual method used for details on the acceptable values.
+        """
+        return self._bandwidth
+
+    @bandwidth.setter
+    def bandwidth(self, value):
+        if self._fitted:
+            value = np.asarray(value)
+            self._bandwidth = value.reshape(self._bandwidth.shape)
+        else:
+            self._bandwidth = value
+
+    @property
+    def weights(self):
+        """
+        Weigths associated to each data point. It can be either a single value,
+        or a 1D-array with a value per data point. If a single value is provided,
+        the weights will always be set to 1.
+        """
+        return self._weights
+
+    @weights.setter
+    def weights(self, ws):
+        try:
+            ws = float(ws)
+            self._weights = np.asarray(1.)
+            self._total_weights = self.npts
+        except TypeError:
+            ws = np.atleast_1d(ws).astype(float)
+            if self._fitted:
+                ws = ws.reshape((self.npts,))
+            self._weights = ws
+            self._total_weights = sum(ws)
+
+    @weights.deleter
+    def weights(self):
+        self._weights = np.asarray(1.)
+        self._total_weights = self.npts
+
+    @property
+    def total_weights(self):
+        return self._total_weights
+
+    @property
+    def adjust(self):
+        """
+        Scaling of the bandwidth, per data point. It can be either a single
+        value or an array with one value per data point. The real bandwidth 
+        then becomes: bandwidth * adjust
+
+        When deleted, the adjusting is reset to 1.
+        """
+        return self._adjust
+
+    @adjust.setter
+    def adjust(self, ls):
+        try:
+            self._adjust = np.asarray(float(ls))
+        except TypeError:
+            ls = np.atleast_1d(ls).astype(float)
+            if self._fitted:
+                ls = ls.reshape((self.npts,))
+            self._adjust = ls
+
+    @adjust.deleter
+    def adjust(self):
+        self._adjust = np.asarray(1.)
 
     @property
     def lower(self):
+        r"""
+        Lower bound of the density domain. If deleted, becomes :math:`-\infty` on all dimension.
+
+        Note that for discrete dimensions, the lower bounds will also be reset to 0.
+        """
         return self._lower
+
+    @lower.setter
+    def lower(self, val):
+        self._lower = np.atleast_1d(val)
+
+    @lower.deleter
+    def lower(self):
+        self._lower = None
 
     @property
     def upper(self):
+        r"""
+        Upper bound of the density domain. If deleted, becomes set to :math:`\infty`
+
+        Note that for discrete dimensions, if the upper dimension is 0, it will be set to the maximum observed element.
+        """
         return self._upper
 
-    @property
-    def kernels(self):
-        return self._kernels
+    @upper.setter
+    def upper(self, val):
+        self._upper = np.atleast_1d(val)
 
-    def get_methods(self, axis_types):
-        m = [None]*len(axis_types)
-        k = [None]*len(axis_types)
-        for i, t in enumerate(axis_types):
-            try:
-                m[i] = self._methods[i]
-            except (IndexError, KeyError):
-                m[i] = self._methods_type[t].copy()
-            try:
-                k[i] = self._kernels[i]
-            except (IndexError, KeyError):
-                k[i] = self._kernels_type[t].for_ndim(1)
-        return m, k
+    @upper.deleter
+    def upper(self):
+        self._upper = None
 
-    def fit(self, kde):
-        methods, kernels = self.get_methods(kde.axis_type)
-        if kde.ndim == 1:
-            return methods[0].fit(kde)
-        if callable(kde.bandwidth):
-            bw = kde.bandwidth(kde)
-        else:
-            bw = np.atleast_1d(kde.bandwidth)
-        if bw.shape != (kde.ndim,):
-            raise ValueError("There should be one bandwidth per dimension")
-        k = KDEAdaptor(kde, bw, kernels)
-        fitted = self.copy()
-        fitted._bw = bw
-        fitted._methods = methods
-        fitted._axis_type = kde.axis_type
-        fitted._kernels = kernels
-        fitted._exog = kde.exog
-        k._bw = bw
-        for i, m in enumerate(methods):
-            k.axis = i
-            fitted.methods[i] = m.fit(k)
-        fitted._lower = np.array([m.lower for m in fitted.methods])
-        fitted._upper = np.array([m.upper for m in fitted.methods])
-        fitted._bin_data = np.concatenate([m.to_bin[:,None] for m in fitted.methods], axis=1)
-        fitted._weights = kde.weights
-        fitted._adjust = kde.adjust
-        fitted._total_weights = kde.total_weights
-        return fitted
-
-    @numpy_trans_method('ndim', 1)
-    def pdf(self, points, out):
-        full_out = np.empty_like(points)
-        for i in range(self.ndim):
-            self._methods[i].pdf(points, out=full_out[...,i], dims=i)
-        np.prod(full_out, axis=1, out=out)
-        return out

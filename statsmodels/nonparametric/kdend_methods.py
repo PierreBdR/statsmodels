@@ -14,6 +14,7 @@ from . import kde1d_methods
 from copy import copy as shallow_copy
 from numpy import s_
 from .fast_linbin import fast_linbin_nd as fast_bin_nd
+from .kde_methods import KDEMethod
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -69,14 +70,8 @@ def _compute_bandwidth(kde):
             bw = kde.bandwidth(kde)
         else:
             bw = kde.bandwidth
-        return bw, None
-    elif kde.covariance is not None:
-        if callable(kde.covariance):
-            cov = kde.covariance(kde)
-        else:
-            cov = kde.covariance
-        return None, cov
-    return None, None
+        return bw
+    return None
 
 def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weights):
     """
@@ -128,7 +123,7 @@ def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weight
     return mesh, density
 
 
-class KDEnDMethod(object):
+class KDEnDMethod(KDEMethod):
     """
     Base class providing a default grid method and a default method for unbounded evaluation of the PDF and CDF. It also 
     provides default methods for the other metrics, based on PDF and CDF calculations.
@@ -151,20 +146,12 @@ class KDEnDMethod(object):
     name = 'unbounded'
 
     def __init__(self):
-        self._exog = None
-        self._upper = None
-        self._lower = None
-        self._kernel = None
-        self._weights = None
-        self._adjust = None
-        self._total_weights = None
-        self._bw = None
+        KDEMethod.__init__(self)
         self._inv_bw = None
         self._det_inv_bw = None
-        self._cov = None
         self.base_p2 = 10
 
-    def fit(self, kde, compute_bandwidth=True):
+    def fit(self, compute_bandwidth=True):
         """
         Extract the parameters required for the computation and returns 
         a stand-alone estimator capable of performing most computations.
@@ -186,67 +173,33 @@ class KDEnDMethod(object):
         is not allowed to change the number of exogenous variables or the 
         dimension of the problem.
         """
-        ndim = kde.ndim
+        ndim = self.ndim
         if ndim == 1 and type(self) == KDEnDMethod:
             method = kde1d_methods.Reflection()
-            return method.fit(kde, compute_bandwidth)
-        npts = kde.npts
+            return method.fit(self, compute_bandwidth)
+        npts = self.npts
         fitted = self.copy()
-        fitted._exog = kde.exog
-        assert kde.upper.shape == (ndim,)
-        fitted._upper = kde.upper
-        assert kde.lower.shape == (ndim,)
-        fitted._lower = kde.lower
-        fitted._kernel = kde.kernel.for_ndim(ndim)
-        assert kde.weights.ndim == 0 or kde.weights.shape == (npts,)
-        fitted._weights = kde.weights
-        assert kde.adjust.ndim == 0 or kde.adjust.shape == (npts,)
-        fitted._adjust = kde.adjust
-        fitted._total_weights = kde.total_weights
+        fitted._exog = self.exog
+        assert self.upper.shape == (ndim,)
+        fitted._upper = self.upper
+        assert self.lower.shape == (ndim,)
+        fitted._lower = self.lower
+        fitted._kernel = self.kernel.for_ndim(ndim)
+        assert self.weights.ndim == 0 or self.weights.shape == (npts,)
+        fitted._weights = self.weights
+        assert self.adjust.ndim == 0 or self.adjust.shape == (npts,)
+        fitted._adjust = self.adjust
+        fitted._total_weights = self.total_weights
         if compute_bandwidth:
-            bw, cov = _compute_bandwidth(kde)
+            bw = _compute_bandwidth(self)
             if bw is not None:
                 fitted.bandwidth = bw
-            elif cov is not None:
-                fitted.covariance = cov
             else:
-                raise ValueError("Error, no bandwidth or covariance have been specified")
+                raise ValueError("Error, no bandwidth has been specified")
         return fitted
 
     def copy(self):
         return shallow_copy(self)
-
-    @property
-    def adjust(self):
-        return self._adjust
-
-    @adjust.setter
-    def adjust(self, val):
-        try:
-            self._adjust = np.asarray(float(val))
-        except TypeError:
-            val = np.atleast_1d(val).astype(float)
-            assert val.shape == (self.npts,), \
-                    "Adjust must be a single values or a 1D array with value per input point"
-            self._adjust = val
-
-    @adjust.deleter
-    def adjust(self):
-        self._adjust = np.asarray(1.)
-
-    @property
-    def ndim(self):
-        """
-        Dimension of the problem
-        """
-        return self._exog.shape[1]
-
-    @property
-    def npts(self):
-        """
-        Number of points in the setup
-        """
-        return self._exog.shape[0]
 
     @property
     def bandwidth(self):
@@ -262,23 +215,19 @@ class KDEnDMethod(object):
     def bandwidth(self, bw):
         bw = np.asarray(bw).squeeze()
         if bw.ndim == 0:
-            cov = bw*bw
             inv_bw = 1/bw
             det_inv_bw = inv_bw**self.ndim
         elif bw.ndim == 1:
             assert bw.shape[0] == self.ndim
-            cov = bw * bw
             inv_bw = 1 / bw
             det_inv_bw = np.product(inv_bw)
         elif bw.ndim == 2:
             assert bw.shape == (self.ndim, self.ndim)
-            cov = np.dot(bw, bw)
             inv_bw = linalg.inv(bw)
             det_inv_bw = linalg.det(inv_bw)
         else:
             raise ValueError("Error, specified bandiwdth has more than 2 dimension")
-        self._bw = bw
-        self._cov = cov
+        self._bandwidth = bw
         self._inv_bw = inv_bw
         self._det_inv_bw = det_inv_bw
 
@@ -295,32 +244,6 @@ class KDEnDMethod(object):
         Inverse of the selected bandwidth
         """
         return self._det_inv_bw
-
-    @property
-    def covariance(self):
-        """
-        Square of the selected bandwidth
-
-        Unlike the covariance for the KDE, this must be an actual value and not 
-        a method.
-        """
-        return self._cov
-
-    @covariance.setter
-    def covariance(self, cov):
-        cov = np.asarray(cov)
-        if cov.ndim == 0:
-            bw = np.sqrt(cov)
-        elif cov.ndim == 1:
-            assert cov.shape[0] == self.ndim
-            bw = np.sqrt(cov)
-        elif cov.ndim == 2:
-            assert cov.shape == (self.ndim, self.ndim)
-            bw = sqrtm(cov)
-        else:
-            raise ValueError("Error, specified covariance has more than 2 dimension")
-        self.bandwidth = bw
-        self._cov = cov
 
     def update_inputs(self, exog, weights=1., adjust=1.):
         exog = atleast_2df(exog)
@@ -339,86 +262,6 @@ class KDEnDMethod(object):
             self._total_weights = weights.sum()
         else:
             self._total_weights = self.npts
-
-    @property
-    def exog(self):
-        """
-        Input points.
-
-        Notes
-        -----
-        At that point, you are not allowed to change the number of exogenous 
-        points.
-        """
-        return self._exog
-
-    @exog.setter
-    def exog(self, value):
-        value = atleast_2df(value)
-        assert value.shape == self._exog.shape
-        self._exog = value
-
-    @property
-    def lower(self):
-        """
-        Lower bound of the problem domain
-        """
-        return self._lower
-
-    @lower.setter
-    def lower(self, val):
-        val = np.atleast_1d(val)
-        assert val.shape == (self.ndim,)
-        self._lower = val
-
-    @property
-    def upper(self):
-        """
-        Upper bound of the problem domain
-        """
-        return self._upper
-
-    @upper.setter
-    def upper(self, val):
-        val = np.atleast_1d(val)
-        assert val.shape == (self.ndim,)
-        self._upper = val
-
-    @property
-    def kernel(self):
-        """
-        Kernel used for the estimation
-        """
-        return self._kernel
-
-    @kernel.setter
-    def kernel(self, ker):
-        self._kernel = ker
-
-    @property
-    def weights(self):
-        """
-        Weights for the points in ``KDE1DMethod.exog``
-        """
-        return self._weights
-
-    @weights.setter
-    def weights(self, val):
-        val = np.asarray(val)
-        if val.shape:
-            assert val.shape == (self.npts,)
-            self._weights = val
-            self._total_weights = np.sum(val)
-        else:
-            self._weights = np.asarray(1.)
-            self._total_weights = float(self.npts)
-
-    @property
-    def total_weights(self):
-        """
-        Sum of the point weights
-        """
-        return self._total_weights
 
     def closed(self, dim = None):
         """
@@ -560,11 +403,11 @@ class KDEnDMethod(object):
         return N
 
 class Cyclic(KDEnDMethod):
-    def fit(self, kde, compute_bandwidth = True):
-        if kde.ndim == 1:
+    def fit(self, compute_bandwidth = True):
+        if self.ndim == 1:
             cyc = kde1d_methods.Cyclic()
-            return cyc.fit(kde, compute_bandwidth)
-        return super(Cyclic, self).fit(kde, compute_bandwidth)
+            return cyc.fit(self, compute_bandwidth)
+        return super(Cyclic, self).fit(self, compute_bandwidth)
 
     @numpy_trans_method('ndim', 1)
     def pdf(self, points, out):
