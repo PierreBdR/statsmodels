@@ -86,6 +86,9 @@ class KDE(object):
     """
     def __init__(self, exog, method=None, **kwords):
 
+        self._exog = None
+        self._lower = None
+        self._upper = None
         self._method = None
         if method is None:
             self.method = default_method
@@ -132,28 +135,8 @@ class KDE(object):
         """
         return self.method.fit()
 
-    _r_attrs = ['npts', 'ndim', 'total_weights']
-    _rw_attrs = ['exog', 'kernel', 'bandwidth']
-    _rwd_attrs = ['axis_type', 'weights', 'adjust', 'lower', 'upper']
-
-def _fwd_to_method(cls, attr, read=True, write=False, delete=False):
-    def getter(self):
-        return getattr(self._method, attr)
-    def setter(self, value):
-        setattr(self._method, attr, value)
-    def deleter(self):
-        delattr(self._method, attr)
-    if not read:
-        getter = None
-    if not write:
-        setter = None
-    if not delete:
-        deleter = None
-    setattr(cls, attr, property(getter, setter, deleter, getattr(KDEMethod, attr).__doc__))
-for attr in KDE._r_attrs:
-    _fwd_to_method(KDE, attr, True)
-for attr in KDE._rw_attrs:
-    _fwd_to_method(KDE, attr, True, True)
-for attr in KDE._rwd_attrs:
-    _fwd_to_method(KDE, attr, True, True, True)
+    def total_weights(self):
+        if self._weights is None:
+            return self.npts
+        return np.sum(self.weights)
 

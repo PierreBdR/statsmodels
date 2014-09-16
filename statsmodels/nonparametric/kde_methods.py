@@ -85,29 +85,16 @@ class KDEMethod(object):
     Although inheriting from it is not required, it is recommended as it will provide quite a few useful services.
     """
     def __init__(self):
-        self._exog = np.empty((0,1), dtype=float)
-        self._upper = np.empty((0,), dtype=float)
-        self._lower = np.empty((0,), dtype=float)
+        self._exog = None
+        self._upper = None
+        self._lower = None
         self._axis_type = AxesType('c')
         self._kernel = kernels.normal_kernel()
         self._bandwidth = bandwidths.MultivariateBandwidth()
-        self._weights = np.array(1.)
-        self._adjust = np.array(1.)
+        self._weights = None
+        self._adjust = None
         self._total_weights = None
-        self._fitted = False
-
-    def set_from(self, other):
-        """
-        Copy the values from a different method.
-        """
-        self._exog = atleast_2df(other.exog)
-        self._upper = np.atleast_1d(other.upper).copy()
-        self._lower = np.atleast_1d(other.lower).copy()
-        self._axis_type.set(other.axis_type)
-        self._bandwidth = other.bandwidth
-        self._weights = other.weights
-        self._adjust = other.adjust
-        return self
+        self._fitted = None
 
     @property
     def exog(self):
@@ -120,24 +107,7 @@ class KDEMethod(object):
     @exog.setter
     def exog(self, value):
         value = atleast_2df(value).astype(float)
-        if self._fitted:
-            self._exog = value.reshape(self._exog.shape)
-        else:
-            ndim = 1 if np.isscalar(self._lower) else len(self._lower)
-            self._exog = value
-            if self._exog.shape[1] != self.ndim:
-                raise ValueError("Error, this method cannot handle problems in {0} dimensions".format(self._exog.shape[1]))
-            if ndim != self.ndim:
-                self._axis_type.resize(self.ndim)
-                if ndim > self.ndim:
-                    self._lower = self._lower[:self.ndim]
-                    self._upper = self._upper[:self.ndim]
-                else:
-                    diff = self.ndim - ndim
-                    self._lower = np.concatenate([self._lower, [-np.inf]*diff])
-                    self._upper = np.concatenate([self._upper, [np.inf]*diff])
-            if self._weights.ndim == 0:
-                self._total_weights = self._exog.shape[0]
+        self._exog = value.reshape(self._exog.shape)
 
     @property
     def ndim(self):
@@ -202,11 +172,8 @@ class KDEMethod(object):
 
     @bandwidth.setter
     def bandwidth(self, value):
-        if self._fitted:
-            value = np.asarray(value)
-            self._bandwidth = value.reshape(self._bandwidth.shape)
-        else:
-            self._bandwidth = value
+        value = np.asarray(value)
+        self._bandwidth = value.reshape(self._bandwidth.shape)
 
     @property
     def weights(self):
@@ -222,13 +189,14 @@ class KDEMethod(object):
         try:
             ws = float(ws)
             self._weights = np.asarray(1.)
-            self._total_weights = self.npts
+            if self._fitted:
+                self._total_weights = self.npts
         except TypeError:
             ws = np.atleast_1d(ws).astype(float)
-            if self._fitted:
-                ws = ws.reshape((self.npts,))
+            ws = ws.reshape((self.npts,))
             self._weights = ws
-            self._total_weights = sum(ws)
+            if self._fitted:
+                self._total_weights = sum(ws)
 
     @weights.deleter
     def weights(self):
@@ -256,8 +224,7 @@ class KDEMethod(object):
             self._adjust = np.asarray(float(ls))
         except TypeError:
             ls = np.atleast_1d(ls).astype(float)
-            if self._fitted:
-                ls = ls.reshape((self.npts,))
+            ls = ls.reshape((self.npts,))
             self._adjust = ls
 
     @adjust.deleter

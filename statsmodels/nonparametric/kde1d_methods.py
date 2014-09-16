@@ -167,23 +167,7 @@ class KDE1DMethod(KDEMethod):
     def bin_type(self):
         return 'b'
 
-    def set_from(self, other):
-        KDEMethod.set_from(self, other)
-        self._exog = self._exog.squeeze()
-        if self._exog.ndim > 1:
-            raise ValueError("Error, this method can only work with 1D data")
-        if self._axis_type[0] != 'c':
-            raise ValueError("Error, this method can only handle continue axis")
-        try:
-            self._lower = float(self._lower)
-        except:
-            self._lower = -np.inf
-        try:
-            self._upper = float(self._lower)
-        except:
-            self._upper = np.inf
-
-    def fit(self, compute_bandwidth=True):
+    def fit(self, kde, compute_bandwidth=True):
         """
         Extract the parameters required for the computation and returns 
         a stand-alone estimator capable of performing most computations.
@@ -210,15 +194,17 @@ class KDE1DMethod(KDEMethod):
             raise ValueError("Error, incompatible method for the type of axis")
         fitted = self.copy()
         if compute_bandwidth:
-            bw = _compute_bandwidth(self)
+            bw = _compute_bandwidth(kde)
             fitted._bandwidth = bw
-        fitted._exog = self.exog.reshape((self.npts,))
-        fitted._upper = float(self.upper)
-        fitted._lower = float(self.lower)
-        fitted._kernel = self.kernel.for_ndim(1)
-        fitted._weights = self.weights
-        fitted._adjust = self.adjust
-        fitted._total_weights = self.total_weights
+        fitted._exog = kde.exog.reshape((kde.npts,))
+        fitted._upper = float(kde.upper)
+        fitted._lower = float(kde.lower)
+        fitted._kernel = kde.kernel.for_ndim(1)
+        fitted._weights = kde.weights
+        assert fitted._weights.ndim == 0 or fitted._weights.shape == (self.npts,)
+        fitted._adjust = kde.adjust
+        assert fitted._adjust.ndim == 0 or fitted._adjust.shape == (self.npts,)
+        fitted._total_weights = kde.total_weights
         return fitted
 
     def copy(self):
@@ -261,12 +247,9 @@ class KDE1DMethod(KDEMethod):
 
     @bandwidth.setter
     def bandwidth(self, val):
-        if self._fitted:
-            val = float(val)
-            assert val > 0, "The bandwidth must be strictly positive"
-            self._bandwidth
-        else:
-            self._bandwidth = val
+        val = float(val)
+        assert val > 0, "The bandwidth must be strictly positive"
+        self._bandwidth
 
     def update_inputs(self, exog, weights=1., adjust=1.):
         """
@@ -1793,7 +1776,6 @@ class TransformKDE(KDE1DMethod):
         if method is None:
             method = Reflection()
         self._method = method
-        self._fitted = False
         self._clean_attrs()
 
     _to_clean = [ '_bw', '_cov', '_adjust'
@@ -1817,11 +1799,27 @@ class TransformKDE(KDE1DMethod):
         """
         return self._method
 
+    def _trans_kde(self, method, new_method):
+        trans_kde = _transKDE(self)
+        trans_kde.lower = self.trans(fitted.lower)
+        trans_kde.upper = self.trans(fitted.upper)
+        trans_kde.exog = self.trans(fitted.exog)
+
+        copy_attrs = [ 'weights', 'adjust', 'kernel'
+                     , 'bandwidth', 'covariance'
+                     , 'total_weights', 'ndim', 'npts' ]
+
+        for attr in copy_attrs:
+            setattr(trans_kde, attr, getattr(self, attr))
+        return trans_kde
+
+
     @method.setter
     def method(self, m):
         if self._fitted:
-            raise ValueError("You cannot change the method of a fitted TransformKDE")
-        self._method = m
+            self._method = m.fit(self._trans_kde())
+        else:
+            self._method = m
 
     def update_inputs(self, exog, weights=1., adjust=1.):
         """
@@ -1889,19 +1887,8 @@ class TransformKDE(KDE1DMethod):
         """
         fitted = super(TransformKDE, self).fit(False)
         fitted._clean_attrs()
-        trans_kde = _transKDE(self)
-        trans_kde.lower = self.trans(fitted.lower)
-        trans_kde.upper = self.trans(fitted.upper)
-        trans_kde.exog = self.trans(fitted.exog)
 
-        copy_attrs = [ 'weights', 'adjust', 'kernel'
-                     , 'bandwidth', 'covariance'
-                     , 'total_weights', 'ndim', 'npts' ]
-
-        for attr in copy_attrs:
-            setattr(trans_kde, attr, getattr(self, attr))
-
-        trans_method = self.method.fit(trans_kde)
+        trans_method = self.method.fit(self._trans_kde())
         fitted.method = trans_method
         fitted._fitted = True
 
