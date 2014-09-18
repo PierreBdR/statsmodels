@@ -9,73 +9,22 @@ import numpy as np
 from copy import copy as shallow_copy
 from .fast_linbin import fast_linbin as fast_bin
 from . import kernels
-from .kde_utils import numpy_trans_method, atleast_2df
+from .kde_utils import numpy_trans_method, atleast_2df, AxesType
 from . import bandwidths
 
-class AxesType(object):
-    _valid_types = 'cou'
-    _dtype = np.dtype(np.str_).char+'1'
-    def __init__(self, value='c'):
-        self._types = np.empty((), dtype=self._dtype)
-        self.set(value)
+def _array_arg(value, value_name, ndim, dtype=float):
+    """
+    Simple function returning an array with ndim values.
 
-    def set(self, value):
-        value = np.array(list(value), dtype=self._types.dtype)
-        if any(v not in AxesType._valid_types for v in value):
-            raise ValueError("Error, an axis type must be one of 'c', 'o' or 'u'")
-        self._types = value
-
-    def copy(self):
-        return AxesType(self)
-
-    def __len__(self):
-        return len(self._types)
-
-    def __repr__(self):
-        return "AxesType('{}')".format(''.join(self._types))
-
-    def __str__(self):
-        return ''.join(self._types)
-
-    def __getitem__(self, idx):
-        if isinstance(idx, slice):
-            return ''.join(self._types[idx])
-        return self._types[idx]
-
-    def __iter__(self):
-        return iter(self._types)
-
-    def __setitem__(self, idx, value):
-        if isinstance(idx, slice):
-            value = list(value)
-            if any(v not in AxesType._valid_types for v in value):
-                raise ValueError("Error, invalid axis type: '{}'".format(''.join(value)))
-            self._types[idx] = value
-        else:
-            if value not in AxesType._valid_types:
-                raise ValueError("Error, invalid axis type: '{}'".format(value))
-            self._types[idx] = value
-
-    def __delitem__(self, idx):
-        del self._types[idx]
-
-    def resize(self, nl, default='c'):
-        cur_l = len(self)
-        if nl < cur_l:
-            self._types = self._types[nl:]
-        elif nl > cur_l:
-            self._types = np.resize(self._types, nl)
-            self._types[cur_l:] = default
-
-    def __eq__(self, other):
-        if isinstance(other, AxesType):
-            return self._types == other._types
-        return self._types == other
-
-    def __ne__(self, other):
-        if isinstance(other, AxesType):
-            return self._types != other._types
-        return self._types != others
+    If value is a single value, it is duplicated as needed.
+    If value is a list of the wrong size, a ValueError is thrown.
+    """
+    value = np.asarray(value, dtype=dtype)
+    if value.ndim == 0:
+        return value * np.ones((ndim,), dtype=dtype)
+    if value.shape != (ndim,):
+        raise ValueError("Error, '{0}' must be a scalar or a 1D array with {1} elements".format(value_name, ndim))
+    return value
 
 
 class KDEMethod(object):
@@ -88,13 +37,17 @@ class KDEMethod(object):
         self._exog = None
         self._upper = None
         self._lower = None
-        self._axis_type = AxesType('c')
-        self._kernel = kernels.normal_kernel()
+        self._axis_type = AxesType()
+        self._kernel = None
         self._bandwidth = bandwidths.MultivariateBandwidth()
         self._weights = None
         self._adjust = None
         self._total_weights = None
-        self._fitted = None
+        self._fitted = False
+
+    @property
+    def fitted(self):
+        return self._fitted
 
     @property
     def exog(self):

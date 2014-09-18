@@ -60,12 +60,14 @@ from . import kernels, bandwidths
 from .kde_methods import KDEMethod
 from . import kde1d_methods, kdend_methods, kdend_methods
 from . import kde_multivariate
-from .kde_utils import atleast_2df
+from .kde_utils import atleast_2df, AxesType
 from ..compat.python import string_types
+from copy import copy as shallow_copy
 
 #default_method = kde1d_methods.Reflection
 #default_method = kdend_methods.KDEnDMethod
 default_method = kde_multivariate.MultivariateKDE
+
 
 class KDE(object):
     r"""
@@ -84,16 +86,17 @@ class KDE(object):
             >>> k = KDE1D(xs)
             >>> k.lower = 0
     """
-    def __init__(self, exog, method=None, **kwords):
+    def __init__(self, exog, **kwords):
 
         self._exog = None
-        self._lower = None
-        self._upper = None
+        self._lower = -np.inf
+        self._upper = np.inf
         self._method = None
-        if method is None:
-            self.method = default_method
-        else:
-            self.method = method
+        self._axis_type = AxesType()
+        self._weights = np.array(1.)
+        self._adjust = np.array(1.)
+        self._bandwidth = None
+        self._kernel = None
 
         self.exog = exog
 
@@ -103,14 +106,72 @@ class KDE(object):
             else:
                 raise AttributeError("Error, unknown attribute: '{}'".format(n))
 
+        if self._method is None:
+            self._method = default_method()
+
     def copy(self):
         """
         Shallow copy of the KDE object
         """
-        res = KDE.__new__(KDE)
-        # Copy private members: start with a single '_'
+        res = shallow_copy(self)
         res._method = self._method.copy()
+        res._axis_type = shallow_copy(self._axis_type)
+        res._lower = shallow_copy(self._lower)
+        res._upper = shallow_copy(self._upper)
         return res
+
+    @property
+    def lower(self):
+        return self._lower
+
+    @lower.setter
+    def lower(self, val):
+        self._lower = val
+
+    @lower.deleter
+    def lower(self):
+        self._lower = -np.inf
+
+    @property
+    def upper(self):
+        return self._upper
+
+    @upper.setter
+    def upper(self, val):
+        self._upper = val
+
+    @upper.deleter
+    def upper(self):
+        self._upper = np.inf
+
+    @property
+    def exog(self):
+        return self._exog
+
+    @exog.setter
+    def exog(self, value):
+        value = atleast_2df(value).astype(float)
+        self._exog = value
+
+    @property
+    def ndim(self):
+        return self._exog.shape[1]
+
+    @property
+    def npts(self):
+        return self._exog.shape[0]
+
+    @property
+    def axis_type(self):
+        return self._axis_type
+
+    @axis_type.setter
+    def axis_type(self, value):
+        self._axis_type = value
+
+    @axis_type.deleter
+    def axis_type(self):
+        self._axis_type = AxesType()
 
     @property
     def method(self):
@@ -129,14 +190,64 @@ class KDE(object):
         if old_method is not None:
             self._method.set_from(old_method)
 
+    @property
+    def weights(self):
+        return self._weights
+
+    @weights.setter
+    def weights(self, value):
+        value = np.asarray(value, dtype=float)
+        if value.ndim > 1:
+            raise ValueError("Error, the weights must be a scalar or a 1D array")
+        if value.ndim == 0:
+            del self.weights
+        else:
+            self._weights = value
+
+    @weights.deleter
+    def weights(self):
+        self._weights = np.array(1.)
+
+    @property
+    def adjust(self):
+        return self._adjust
+
+    @adjust.setter
+    def adjust(self, value):
+        value = np.asarray(value, dtype=float)
+        if value.ndim > 1:
+            raise ValueError("Error, adjust must be a 1D array")
+        self._adjust = value
+
+    @adjust.deleter
+    def adjust(self):
+        self._adjust = np.array(1.)
+
+    @property
+    def bandwidth(self):
+        return self._bandwidth
+
+    @bandwidth.setter
+    def bandwidth(self, value):
+        self._bandwidth = value
+
+    @property
+    def kernel(self):
+        return self._kernel
+
+    @kernel.setter
+    def kernel(self, value):
+        self._kernel = value
+
     def fit(self):
         """
         Compute the various parameters needed by the kde method
         """
-        return self.method.fit()
+        return self.method.fit(self)
 
+    @property
     def total_weights(self):
-        if self._weights is None:
+        if self._weights.ndim == 0:
             return self.npts
         return np.sum(self.weights)
 

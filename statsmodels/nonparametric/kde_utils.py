@@ -319,6 +319,65 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
         return f
     return decorator
 
+class AxesType(object):
+    _dtype = np.dtype(np.str_).char+'1'
+    def __init__(self, value='c'):
+        self._types = np.empty((), dtype=self._dtype)
+        self.set(value)
+
+    def set(self, value):
+        value = np.array(list(value), dtype=self._types.dtype)
+        self._types = value
+
+    def copy(self):
+        return AxesType(self)
+
+    def __len__(self):
+        return len(self._types)
+
+    def __repr__(self):
+        return "AxesType('{}')".format(''.join(self._types))
+
+    def __str__(self):
+        return ''.join(self._types)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return ''.join(self._types[idx])
+        return self._types[idx]
+
+    def __iter__(self):
+        return iter(self._types)
+
+    def __setitem__(self, idx, value):
+        if isinstance(idx, slice):
+            value = list(value)
+            self._types[idx] = value
+        else:
+            self._types[idx] = value
+
+    def __delitem__(self, idx):
+        del self._types[idx]
+
+    def resize(self, nl, default='c'):
+        cur_l = len(self)
+        if nl < cur_l:
+            self._types = self._types[nl:]
+        elif nl > cur_l:
+            self._types = np.resize(self._types, nl)
+            self._types[cur_l:] = default
+
+    def __eq__(self, other):
+        if isinstance(other, AxesType):
+            return self._types == other._types
+        return self._types == other
+
+    def __ne__(self, other):
+        if isinstance(other, AxesType):
+            return self._types != other._types
+        return self._types != other
+
+
 
 #
 from scipy import sqrt

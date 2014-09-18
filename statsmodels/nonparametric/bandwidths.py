@@ -1,7 +1,7 @@
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, optimize, linalg
-from .kde_utils import large_float, finite, atleast_2df
+from .kde_utils import large_float, finite, atleast_2df, AxesType
 from statsmodels.compat.python import range
 from scipy.stats import scoreatpercentile as sap
 
@@ -181,13 +181,17 @@ class KDE1DAdaptor(object):
     def exog(self):
         return self._kde.exog[..., self._axis]
 
-    _list_attributes = ['lower', 'upper', 'axis_type', 'kernel']
+    _list_attributes = ['lower', 'upper', 'axis_type', 'kernel', 'bandwidth']
 
-    _constant_attributes = ['weights', 'adjust', 'total_weights', 'bandwidth', 'npts']
+    _constant_attributes = ['weights', 'adjust', 'total_weights', 'npts']
 
 def _add_fwd_list_attr(cls, attr):
     def getter(self):
-        return getattr(self._kde, attr)[self._axis]
+        value = getattr(self._kde, attr)
+        try:
+            return getattr(self._kde, attr)[self._axis]
+        except:
+            return value
     setattr(cls, attr, property(getter))
 
 def _add_fwd_attr(cls, attr):
@@ -210,9 +214,13 @@ class MultivariateBandwidth(object):
 
     def __call__(self, model):
         res = np.zeros(model.ndim, dtype=float)
-        c = np.nonzero(model.axis_type == 'c')[0]
-        o = np.nonzero(model.axis_type == 'o')[0]
-        u = np.nonzero(model.axis_type == 'u')[0]
+        if len(model.axis_type) == 1:
+            axis_type = AxesType(model.axis_type[0]*model.ndim)
+        else:
+            axis_type = AxesType(model.axis_type)
+        c = np.nonzero(axis_type == 'c')[0]
+        o = np.nonzero(axis_type == 'o')[0]
+        u = np.nonzero(axis_type == 'u')[0]
         adapt = KDE1DAdaptor(model)
         if callable(self.continuous):
             for d in c:

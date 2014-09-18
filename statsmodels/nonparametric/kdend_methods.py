@@ -7,14 +7,14 @@ This module contains a set of methods to compute multivariates KDEs.
 import numpy as np
 from scipy import linalg
 from statsmodels.compat.python import range
-from .kde_utils import numpy_trans_method, atleast_2df
+from .kde_utils import numpy_trans_method, atleast_2df, AxesType
 from .grid import Grid
 from numpy import newaxis
-from . import kde1d_methods
+from . import kde1d_methods, kernels
 from copy import copy as shallow_copy
 from numpy import s_
 from .fast_linbin import fast_linbin_nd as fast_bin_nd
-from .kde_methods import KDEMethod
+from .kde_methods import KDEMethod, _array_arg
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -59,19 +59,19 @@ def generate_grid(kde, N=None, cut=None):
         axes[i] = np.linspace(lower[i], upper[i], N[i])
     return Grid(axes)
 
-def _compute_bandwidth(kde):
+def _compute_bandwidth(kde, default):
     """
     Compute the bandwidth and covariance for the estimated model, based of its 
     exog attribute
     """
     n = kde.ndim
     if kde.bandwidth is not None:
-        if callable(kde.bandwidth):
-            bw = kde.bandwidth(kde)
-        else:
-            bw = kde.bandwidth
-        return bw
-    return None
+        bw = kde.bandwidth
+    else:
+        bw = default
+    if callable(bw):
+        bw = bw(kde)
+    return bw
 
 def fftdensity(exog, kernel_rfft, bw_inv, lower, upper, N, weights, total_weights):
     """
@@ -150,8 +150,9 @@ class KDEnDMethod(KDEMethod):
         self._inv_bw = None
         self._det_inv_bw = None
         self.base_p2 = 10
+        self._kernel = kernels.normal_kernel()
 
-    def fit(self, compute_bandwidth=True):
+    def fit(self, kde, compute_bandwidth=True):
         """
         Extract the parameters required for the computation and returns 
         a stand-alone estimator capable of performing most computations.
@@ -173,23 +174,27 @@ class KDEnDMethod(KDEMethod):
         is not allowed to change the number of exogenous variables or the 
         dimension of the problem.
         """
-        ndim = self.ndim
+        ndim = kde.ndim
         if ndim == 1 and type(self) == KDEnDMethod:
-            method = kde1d_methods.Reflection().set_from(self)
-            return method.fit(compute_bandwidth)
-        npts = self.npts
+            method = kde1d_methods.Reflection()
+            return method.fit(kde, compute_bandwidth)
+        npts = kde.npts
         fitted = self.copy()
         fitted._fitted = True
-        assert self.upper.shape == (ndim,)
-        assert self.lower.shape == (ndim,)
-        fitted._kernel = self.kernel.for_ndim(ndim)
-        assert self.weights.ndim == 0 or self.weights.shape == (npts,)
-        fitted._weights = self.weights
-        assert self.adjust.ndim == 0 or self.adjust.shape == (npts,)
-        fitted._adjust = self.adjust
-        fitted._total_weights = self.total_weights
+        fitted._exog = kde.exog
+        fitted._upper = _array_arg(kde.upper, 'upper', ndim)
+        fitted._lower = _array_arg(kde.lower, 'lower', ndim)
+        if np.any(kde.axis_type != 'c') or np.any(fitted.axis_type != kde.axis_type):
+            raise ValueError("Error, all axis must be continuous")
+        if kde.kernel is not None:
+            fitted._kernel = kde.kernel.for_ndim(ndim)
+        else:
+            fitted._kernel = self.kernel.for_ndim(ndim)
+        fitted._weights = kde.weights
+        fitted._adjust = kde.adjust
+        fitted._total_weights = kde.total_weights
         if compute_bandwidth:
-            bw = _compute_bandwidth(self)
+            bw = _compute_bandwidth(kde, self.bandwidth)
             if bw is not None:
                 fitted.bandwidth = bw
             else:
@@ -198,6 +203,12 @@ class KDEnDMethod(KDEMethod):
 
     def copy(self):
         return shallow_copy(self)
+
+    @property
+    def axis_type(self):
+        if len(self._axis_type) != self.ndim:
+            self._axis_type.set('c'*self.ndim)
+        return self._axis_type
 
     @property
     def bandwidth(self):
@@ -404,11 +415,11 @@ class KDEnDMethod(KDEMethod):
         return N
 
 class Cyclic(KDEnDMethod):
-    def fit(self, compute_bandwidth = True):
-        if self.ndim == 1:
-            cyc = kde1d_methods.Cyclic().set_from(self)
-            return cyc.fit(compute_bandwidth)
-        return super(Cyclic, self).fit(compute_bandwidth)
+    def fit(self, kde, compute_bandwidth = True):
+        if kde.ndim == 1:
+            cyc = kde1d_methods.Cyclic()
+            return cyc.fit(kde, compute_bandwidth)
+        return super(Cyclic, self).fit(kde, compute_bandwidth)
 
     @numpy_trans_method('ndim', 1)
     def pdf(self, points, out):

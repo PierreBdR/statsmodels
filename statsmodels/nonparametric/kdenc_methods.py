@@ -11,6 +11,7 @@ from .kde_utils import numpy_trans1d_method, finite
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kde_methods import KDEMethod
+from . import kernels
 
 def _compute_bandwidth(kde):
     """
@@ -34,7 +35,7 @@ class UnorderedKDE(KDEMethod):
         self._weights = None
         self._total_weights = None
         self._bw = None
-        self._kernel = None
+        self._kernel = kernels.AitchisonAitken()
 
     @property
     def axis_type(self):
@@ -53,23 +54,27 @@ class UnorderedKDE(KDEMethod):
     def to_bin(self):
         return self._exog
 
-    def fit(self, compute_bandwidth=True):
+    def fit(self, kde, compute_bandwidth=True):
+        if kde.ndim != 1:
+            raise ValueError("Error, this method only accepts one variable problem")
+        if kde.axis_type != self.axis_type:
+            raise ValueError("Error, this method only accepts an unordered discrete axis")
         fitted = self.copy()
         fitted._fitted = True
+        fitted._exog = kde.exog.reshape((kde.npts,))
         if compute_bandwidth:
-            fitted._bw = _compute_bandwidth(self)
-        if not finite(self.upper):
+            fitted._bw = _compute_bandwidth(kde)
+        if not finite(kde.upper):
             fitted._num_levels = int(fitted._exog.max())+1
         else:
-            fitted._num_levels = int(self.upper)+1
-        if fitted._num_levels <= 2:
+            fitted._num_levels = int(kde.upper)+1
+        if fitted.num_levels <= 2:
             raise ValueError("Error, there must be at least two levels for this method")
-        fitted._kernel = self.kernel.for_ndim(1)
-        if fitted._total_weights is None:
-            if fitted.weights.ndim > 0:
-                fitted._total_weights = fitted.weights.sum()
-            else:
-                fitted._total_weights = float(fitted.npts)
+        if kde.kernel is not None:
+            fitted._kernel = kde.kernel.for_ndim(1)
+        fitted._weights = kde.weights
+        fitted._adjust = kde.adjust
+        fitted._total_weights = kde.total_weights
         return fitted
 
     def copy(self):
@@ -258,7 +263,7 @@ class UnorderedKDE(KDEMethod):
         weights = self.weights
         if weights.ndim == 0:
             weights = None
-        mesh, bins = fast_bin(self._exog, [0, self.num_levels-1], self.num_levels, weights=weights, bin_type='N')
+        mesh, bins = fast_bin(self._exog, [0, self.num_levels-1], self.num_levels, weights=weights, bin_type='n')
         return mesh, self.from_binned(mesh, bins, True)
 
     def from_binned(self, mesh, bins, normed=False, axis=-1):
@@ -268,6 +273,10 @@ class UnorderedKDE(KDEMethod):
         return result
 
 class OrderedKDE(UnorderedKDE):
+    def __init__(self):
+        UnorderedKDE.__init__(self)
+        self._kernel = kernels.WangRyzin()
+
     @property
     def axis_type(self):
         return 'o'

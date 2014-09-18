@@ -36,13 +36,14 @@ References:
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, integrate, optimize
-from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d, finite
+from .kde_utils import make_ufunc, namedtuple, numpy_trans1d_method, numpy_trans1d, finite, AxesType
 from .grid import Grid
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D
 from .grid_interpolation import GridInterpolator
-from .kde_methods import KDEMethod, AxesType
+from .kde_methods import KDEMethod
+from . import bandwidths, kernels
 
 def generate_grid(kde, N=None, cut=None):
     r"""
@@ -77,18 +78,21 @@ def generate_grid(kde, N=None, cut=None):
     mesh += step/2
     return Grid(mesh, bounds=[lower, upper])
 
-def _compute_bandwidth(kde):
+def _compute_bandwidth(kde, default):
     """
     Compute the bandwidth and covariance for the estimated model, based of its 
     exog attribute
     """
-    if kde.bandwidth is not None:
-        if callable(kde.bandwidth):
-            bw = float(kde.bandwidth(kde))
-        else:
-            bw = float(kde.bandwidth)
-        return bw
-    raise ValueError("Bandwidth or covariance needs to be specified")
+    if kde.bandwidth is None:
+        bw = default
+    else:
+        bw = kde.bandwidth
+    if callable(bw):
+        bw = float(bw(kde))
+    else:
+        bw = float(bw)
+    return bw
+    raise ValueError("Bandwidth needs to be specified")
 
 def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., dim=-1):
     """
@@ -153,6 +157,7 @@ class KDE1DMethod(KDEMethod):
 
     def __init__(self):
         KDEMethod.__init__(self)
+        self._kernel = kernels.normal_kernel()
 
     @property
     def axis_type(self):
@@ -188,18 +193,22 @@ class KDE1DMethod(KDEMethod):
         is not allowed to change the number of exogenous variables or the 
         dimension of the problem.
         """
-        if self.ndim != 1:
+        if kde.ndim != 1:
             raise ValueError("Error, this is a 1D method, expecting a 1D problem")
-        if self.axis_type != self.axis_type:
+        if np.any(kde.axis_type != self.axis_type):
             raise ValueError("Error, incompatible method for the type of axis")
         fitted = self.copy()
+        fitted._fitted = True
         if compute_bandwidth:
-            bw = _compute_bandwidth(kde)
+            bw = _compute_bandwidth(kde, self._bandwidth)
             fitted._bandwidth = bw
         fitted._exog = kde.exog.reshape((kde.npts,))
         fitted._upper = float(kde.upper)
         fitted._lower = float(kde.lower)
-        fitted._kernel = kde.kernel.for_ndim(1)
+        if kde.kernel is not None:
+            fitted._kernel = kde.kernel.for_ndim(1)
+        else:
+            fitted._kernel = self._kernel.for_ndim(1)
         fitted._weights = kde.weights
         assert fitted._weights.ndim == 0 or fitted._weights.shape == (self.npts,)
         fitted._adjust = kde.adjust
@@ -1778,7 +1787,7 @@ class TransformKDE(KDE1DMethod):
         self._method = method
         self._clean_attrs()
 
-    _to_clean = [ '_bw', '_cov', '_adjust'
+    _to_clean = [ '_bandwidth', '_adjust'
                 , '_weights', '_kernel', '_total_weights' ]
     def _clean_attrs(self):
         """
@@ -1801,9 +1810,9 @@ class TransformKDE(KDE1DMethod):
 
     def _trans_kde(self, method, new_method):
         trans_kde = _transKDE(self)
-        trans_kde.lower = self.trans(fitted.lower)
-        trans_kde.upper = self.trans(fitted.upper)
-        trans_kde.exog = self.trans(fitted.exog)
+        trans_kde.lower = self.trans(self.lower)
+        trans_kde.upper = self.trans(self.upper)
+        trans_kde.exog = self.trans(self.exog)
 
         copy_attrs = [ 'weights', 'adjust', 'kernel'
                      , 'bandwidth', 'covariance'
@@ -1878,17 +1887,16 @@ class TransformKDE(KDE1DMethod):
                  , 'bandwidth', 'covariance'
                  , 'total_weights', 'ndim', 'npts' ]
 
-    def fit(self):
+    def fit(self, kde):
         """
         Method called by the KDE object right after fitting to allow for 
         one-time calculation.
 
         This method copy, and transform, the various attributes of the KDE.
         """
-        fitted = super(TransformKDE, self).fit(False)
-        fitted._clean_attrs()
+        fitted = super(TransformKDE, self).fit(kde, False)
 
-        trans_method = self.method.fit(self._trans_kde())
+        trans_method = self.method.fit(fitted._trans_kde())
         fitted.method = trans_method
         fitted._fitted = True
 

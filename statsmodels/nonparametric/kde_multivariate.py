@@ -6,12 +6,41 @@ This module contains the multi-variate KDE meta-method.
 
 from __future__ import division, absolute_import, print_function
 import numpy as np
+from statsmodels.compat.python import range
 from copy import copy as shallow_copy
 from .fast_linbin import fast_linbin as fast_bin
 from . import kernels, kernelsnc
 from . import kde1d_methods, kdenc_methods, bandwidths
-from .kde_utils import numpy_trans_method
-from .kde1d_methods import KDEMethod
+from .kde_utils import numpy_trans_method, AxesType
+from .kde_methods import KDEMethod, _array_arg
+from .bandwidths import KDE1DAdaptor
+
+def _compute_bandwidth(kde, default):
+    """
+    Compute the bandwidth and covariance for the estimated model, based of its 
+    exog attribute
+    """
+    n = kde.ndim
+    if kde.bandwidth is not None:
+        bw = kde.bandwidth
+    else:
+        bw = default
+    if callable(bw):
+        bw = bw(kde)
+    else:
+        adapt = KDE1DAdaptor(kde)
+        for i in range(n):
+            local_bw = bw[i]
+            if callable(local_bw):
+                adapt.axis = i
+                local_bw = float(local_bw(adapt))
+            else:
+                local_bw = float(local_bw)
+            bn[i] = local_bw
+    bw = np.asarray(bw, dtype=float)
+    if bw.shape != (n,):
+        raise ValueError("Error, there must be one bandwidth per variable")
+    return bw
 
 class MultivariateKDE(KDEMethod):
     """
@@ -123,47 +152,38 @@ class MultivariateKDE(KDEMethod):
     def methods(self):
         return self._methods
 
-    def fit(self):
-        methods, kernels = self.get_methods(self.axis_type)
-        if self.ndim == 1:
-            return methods[0].set_from(self).fit()
-        if callable(self.bandwidth):
-            bw = self.bandwidth(self)
+    def fit(self, kde):
+        if len(kde.axis_type) == 1:
+            axis_type = AxesType(kde.axis_type[0]*kde.ndim)
         else:
-            bw = np.atleast_1d(self.bandwidth)
-        if bw.shape != (self.ndim,):
-            raise ValueError("There should be one bandwidth per dimension")
+            axis_type = AxesType(kde.axis_type)
+        if len(axis_type) != kde.ndim:
+            raise ValueError("You must specify exacltly one axis type, or as many as there are axis")
+        methods, kernels = self.get_methods(axis_type)
+        ndim = kde.ndim
+        if ndim == 1:
+            return methods[0].fit(kde)
+        bw = _compute_bandwidth(kde, self.bandwidth)
         fitted = self.copy()
-        fitted._bw = bw
-        fitted._axis_type = self.axis_type
+        fitted._bandwidth = bw
+        fitted._axis_type = kde.axis_type
         fitted._kernels = kernels
-        fitted._exog = self.exog
-        if callable(self.bandwidth):
-            bw = self.bandwidth(self)
-        else:
-            bw = self.bandwidth
-        bw = np.atleast_1d(bw).astype(float)
-        if bw.shape != (fitted.ndim,):
-            raise ValueError("Error, the bandwidth must contain {} values".format(self.ndim))
-        self._bandwidth = bw
+        fitted._exog = kde.exog
+        new_kde = kde.copy()
+        new_kde.kernels = kernels
+        new_kde.bandwidth = bw
+        adapt = KDE1DAdaptor(new_kde)
         for d, m in enumerate(methods):
-            m.bandwidth = bw[d]
-            m.kernel = kernels[d]
-            m.lower = self.lower[d]
-            m.upper = self.upper[d]
-            m.axis_type = self.axis_type[d]
-            m.exog = self.exog[...,d]
-            m.weights = self.weights
-            m.adjust = self.adjust
-            f = m.fit()
+            adapt.axis = d
+            f = m.fit(adapt)
             methods[d] = f
         fitted._methods = methods
         fitted._lower = np.array([m.lower for m in fitted.methods])
         fitted._upper = np.array([m.upper for m in fitted.methods])
         fitted._bin_data = np.concatenate([m.to_bin[:,None] for m in fitted.methods], axis=1)
-        fitted._weights = self.weights
-        fitted._adjust = self.adjust
-        fitted._total_weights = self.total_weights
+        fitted._weights = kde.weights
+        fitted._adjust = kde.adjust
+        fitted._total_weights = kde.total_weights
         return fitted
 
     @numpy_trans_method('ndim', 1)
@@ -173,3 +193,7 @@ class MultivariateKDE(KDEMethod):
             self._methods[i].pdf(points, out=full_out, dims=i)
         np.prod(full_out, axis=1, out=out)
         return out
+
+    def __call__(self, points, out=None):
+        return self.pdf(points, out)
+
