@@ -15,12 +15,12 @@ DEF MAX_DIM = 64
 DEF BOUNDED = 0
 DEF REFLECTED = 1
 DEF CYCLIC = 2
-DEF NON_CONTINUOUS = 3
+DEF DISCRETE = 3
 
 cdef object bin_type_map = dict(b=BOUNDED,
                                 r=REFLECTED,
                                 c=CYCLIC,
-                                n=NON_CONTINUOUS)
+                                d=DISCRETE)
 
 
 @cython.boundscheck(False)
@@ -57,7 +57,7 @@ def interp1d(np.ndarray[DOUBLE] X not None,
             upper += rem
         init_inf = 0
         init_sup = M
-    elif bin_type == NON_CONTINUOUS:
+    elif bin_type == DISCRETE:
         init_inf = 0
         init_sup = M-1
     else:
@@ -99,7 +99,7 @@ def interp1d(np.ndarray[DOUBLE] X not None,
             elif val >= mesh[M-1]:
                 out[i] = values[M-1]
                 continue
-        else: # NON_CONTINUOUS
+        else: # DISCRETE
             val = round(val)
             if val < lower or val > upper:
                 out[i] = NAN
@@ -108,7 +108,7 @@ def interp1d(np.ndarray[DOUBLE] X not None,
         # Search for the sample in the mesh
         inf = binary_search(val, data, init_inf, init_sup)
 
-        if bin_type == NON_CONTINUOUS:
+        if bin_type == DISCRETE:
             if mesh[inf] == val:
                 out[i] = values[inf]
             else:
@@ -184,7 +184,7 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
                 upper[d] += tmp
             init_inf[d] = 0
             init_sup[d] = M[d]
-        elif bin_types[d] == NON_CONTINUOUS:
+        elif bin_types[d] == DISCRETE:
             init_inf[d] = 0
             init_sup[d] = M[d]-1
         else:
@@ -230,7 +230,7 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
                     inf[d] = M[d]-1
                     sup[d] = 0
                     rem[d] = 0
-            else: # NON_CONTINUOUS
+            else: # DISCRETE
                 val[d] = round(val[d])
                 if val[d] < lower[d] or val[d] > upper[d]:
                     out[i] = NAN
@@ -242,7 +242,7 @@ def interpnd(np.ndarray[DOUBLE, ndim=2] X not None,
             # Search for the sample in the mesh
             inf[d] = binary_search(val[d], meshes[d], init_inf[d], init_sup[d])
 
-            if bin_types[d] == NON_CONTINUOUS:
+            if bin_types[d] == DISCRETE:
                 sup[d] = inf[d]+1
                 if meshes[d][inf[d]] == val[d]:
                     rem[d] = 0

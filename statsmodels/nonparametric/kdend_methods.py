@@ -526,7 +526,5 @@ class Cyclic(KDEnDMethod):
                 upper[d] = np.max(exog[:,d]) + cut[d]
 
         weights = self.weights
-        if not weights.shape:
-            weights = None
 
         return fftdensity(exog, self.kernel.rfft, bw_inv, lower, upper, N, weights, self.total_weights)

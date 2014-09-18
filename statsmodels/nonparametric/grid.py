@@ -208,10 +208,13 @@ class Grid(object):
         if self._edges is None:
             edges = [ np.empty((s+1,), dtype=self.dtype) for s in self._shape ]
             bin_types = self.bin_types
-            for d, (es, bnd, ax) in enumerate(zip(edges, self.bounds, self.grid)):
-                es[1:-1] = (ax[1:] + ax[:-1])/2
-                es[0] = bnd[0]
-                es[-1] = bnd[1]
+            for d, (es, bnd, ax, bn) in enumerate(zip(edges, self.bounds, self.grid, self.bin_types)):
+                if bn == 'd':
+                    es[:] = np.arange(len(ax)+1) - 0.5
+                else:
+                    es[1:-1] = (ax[1:] + ax[:-1])/2
+                    es[0] = bnd[0]
+                    es[-1] = bnd[1]
             self._edges = edges
         return self._edges
 

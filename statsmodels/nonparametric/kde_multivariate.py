@@ -14,6 +14,7 @@ from . import kde1d_methods, kdenc_methods, bandwidths
 from .kde_utils import numpy_trans_method, AxesType
 from .kde_methods import KDEMethod, _array_arg
 from .bandwidths import KDE1DAdaptor
+from .fast_linbin import fast_linbin_nd as fast_bin_nd
 
 def _compute_bandwidth(kde, default):
     """
@@ -36,7 +37,7 @@ def _compute_bandwidth(kde, default):
                 local_bw = float(local_bw(adapt))
             else:
                 local_bw = float(local_bw)
-            bn[i] = local_bw
+            bw[i] = local_bw
     bw = np.asarray(bw, dtype=float)
     if bw.shape != (n,):
         raise ValueError("Error, there must be one bandwidth per variable")
@@ -48,6 +49,8 @@ class MultivariateKDE(KDEMethod):
     """
     def __init__(self, **kwords):
         KDEMethod.__init__(self)
+        self._bin_data = None
+        self.base_p2 = 16
         self._methods = {}
         self._kernels = {}
         self._kernels_type = dict(c=kernels.normal_kernel1d(),
@@ -173,14 +176,17 @@ class MultivariateKDE(KDEMethod):
         new_kde.kernels = kernels
         new_kde.bandwidth = bw
         adapt = KDE1DAdaptor(new_kde)
+        bin_data = None
         for d, m in enumerate(methods):
             adapt.axis = d
             f = m.fit(adapt)
             methods[d] = f
+            if f.to_bin is not None:
+                bin_data = True
         fitted._methods = methods
         fitted._lower = np.array([m.lower for m in fitted.methods])
         fitted._upper = np.array([m.upper for m in fitted.methods])
-        fitted._bin_data = np.concatenate([m.to_bin[:,None] for m in fitted.methods], axis=1)
+        fitted._bin_data = bin_data
         fitted._weights = kde.weights
         fitted._adjust = kde.adjust
         fitted._total_weights = kde.total_weights
@@ -196,4 +202,86 @@ class MultivariateKDE(KDEMethod):
 
     def __call__(self, points, out=None):
         return self.pdf(points, out)
+
+    @property
+    def to_bin(self):
+        if self._bin_data is not None:
+            if self._bin_data is True:
+                self._bin_data = self._exog.copy()
+                for d, m in enumerate(self.methods):
+                    if m.to_bin is not None:
+                        self._bin_data[:,d] = m.to_bin
+            return self._bin_data
+        return self._exog
+
+    def update_inputs(self, exog, weights=1., adjust=1.):
+        """
+        Update the inputs
+        """
+        exog = np.atleast_2d(exog)
+        if exog.ndim > 2 or exog.shape[1] != self.ndim:
+            raise ValueError("Error, wrong number of dimensions for exog, this cannot be changed after fitting!")
+        npts, ndim = exog.shape
+        weights = np.asarray(weights, dtype=float).squeeze()
+        if weights.ndim > 1:
+            raise ValueError("Error, weights must be at most a 1D array")
+        if weights.ndim == 1 and weights.shape != (npts,):
+            raise ValueError("Error, weights must be a single value or have as many values as points in exog")
+        adjust = np.asarray(adjust, dtype=float).squeeze()
+        if adjust.ndim > 1:
+            raise ValueError("Error, adjust must be at most a 1D array")
+        if adjust.ndim == 1 and adjust.shape != (npts,):
+            raise ValueError("Error, adjust must be a single value or have as many values as points in exog")
+        self._exog = exog
+        self._weights = weights
+        self._adjust = adjust
+        bin_data = None
+        for d, m in enumerate(self.methods):
+            m.update_inputs(exog[:,d], weights, adjust)
+            if m.to_bin is not None:
+                bin_data = True
+        self._bin_data = bin_data
+
+    def grid_size(self, N = None):
+        if N is None:
+            p2 = self.base_p2 // self.ndim
+            if self.base_p2 % self.ndim > 0:
+                p2 += 1
+            return 2**p2
+        return N
+
+    def grid(self, N=None, cut=None):
+        to_bin = self.to_bin
+        bin_types = ''.join(m.bin_type for m in self.methods)
+        bounds = np.c_[self.lower, self.upper]
+
+        if cut is None:
+            cut = [ getattr(m.kernel, 'cut', None) for m in self.methods ]
+        elif np.isscalar(cut):
+            cut = [cut]*self.ndim
+
+        for d in range(self.ndim):
+            m = self.methods[d]
+            if m.transform_axis is not None:
+                l, u = m.transform_axis(bounds[d])
+            else:
+                l, u = bounds[d]
+            if l == -np.inf:
+                bounds[d,0] = to_bin[:,d].min() - cut[d] * m.bandwidth
+            if u == np.inf:
+                bounds[d,1] = to_bin[:,d].max() + cut[d] * m.bandwidth
+
+        N = self.grid_size(N)
+        mesh, binned = fast_bin_nd(to_bin, bounds, N, self.weights, bin_types)
+        binned /= self.total_weights
+
+        for d, m in enumerate(self.methods):
+            binned = m.from_binned(mesh, binned, dim=d)
+
+        for d, m in enumerate(self.methods):
+            if m.transform_bins is not None:
+                binned = m.transform_bins(mesh, binned, axis=d)
+        mesh.transform([m.restore_axis for m in self.methods])
+
+        return mesh, binned
 

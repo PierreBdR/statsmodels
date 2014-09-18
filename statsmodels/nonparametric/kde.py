@@ -182,13 +182,10 @@ class KDE(object):
 
     @method.setter
     def method(self, m):
-        old_method = self._method
         if isinstance(m, type):
             self._method = m()
         else:
             self._method = m
-        if old_method is not None:
-            self._method.set_from(old_method)
 
     @property
     def weights(self):

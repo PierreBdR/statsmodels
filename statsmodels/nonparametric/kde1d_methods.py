@@ -80,8 +80,7 @@ def generate_grid(kde, N=None, cut=None):
 
 def _compute_bandwidth(kde, default):
     """
-    Compute the bandwidth and covariance for the estimated model, based of its 
-    exog attribute
+    Compute the bandwidth for the estimated model, based of its exog attribute
     """
     if kde.bandwidth is None:
         bw = default
@@ -137,6 +136,7 @@ def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., dim=
     else:
         terms.sum(axis=dim, out=out)
     out /= factor
+
     return out
 
 
@@ -207,12 +207,12 @@ class KDE1DMethod(KDEMethod):
         fitted._lower = float(kde.lower)
         if kde.kernel is not None:
             fitted._kernel = kde.kernel.for_ndim(1)
-        else:
+        elif hasattr(self, '_kernel') and self._kernel is not None:
             fitted._kernel = self._kernel.for_ndim(1)
         fitted._weights = kde.weights
-        assert fitted._weights.ndim == 0 or fitted._weights.shape == (self.npts,)
+        assert fitted._weights.ndim == 0 or fitted._weights.shape == (kde.npts,)
         fitted._adjust = kde.adjust
-        assert fitted._adjust.ndim == 0 or fitted._adjust.shape == (self.npts,)
+        assert fitted._adjust.ndim == 0 or fitted._adjust.shape == (kde.npts,)
         fitted._total_weights = kde.total_weights
         return fitted
 
@@ -286,10 +286,16 @@ class KDE1DMethod(KDEMethod):
         """
         Property holding to data to be binned. This is useful when the PDF is 
         not evaluated on the real dataset, but on a transformed one.
+
+        Returns
+        -------
+        ndarray
+            Return the data to bin, or None if it is the same as the exog data
         """
-        return self._exog
+        return None
 
     transform_axis = None
+    restore_axis = None
     transform_bins = None
 
     @property
@@ -435,6 +441,9 @@ class KDE1DMethod(KDEMethod):
 
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
+
+        out[points[...,0] >= self.upper] = 1
+        out[points[...,0] <= self.lower] = 0
 
         return out
 
@@ -919,6 +928,10 @@ class KDE1DMethod(KDEMethod):
         @make_ufunc()
         def comp_cdf(i):
             low = self.lower if i == 0 else sp[i-1]
+            if sp[i] == -np.inf:
+                return 0
+            elif sp[i] == np.inf:
+                return 1
             return integrate.quad(pdf, low, sp[i])[0]
 
         parts = np.empty(sp.shape, dtype=float)
@@ -1125,6 +1138,9 @@ class Cyclic(KDE1DMethod):
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
+        out[points[...,0] >= self.upper] = 1
+        out[points[...,0] <= self.lower] = 0
+
         return out
 
     def grid(self, N=None, cut=None):
@@ -1151,11 +1167,7 @@ class Cyclic(KDE1DMethod):
             lower = np.min(exog) - cut * self.bandwidth
             upper = np.max(exog) + cut * self.bandwidth
 
-        weights = self.weights
-        if not weights.shape:
-            weights = None
-
-        return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, weights, self.total_weights)
+        return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, self.weights, self.total_weights)
 
     def from_binned(self, mesh, binned, normed=False, dim=-1):
         return fftdensity_from_binned(mesh, binned, self.kernel.rfft, self.bandwidth, normed,
@@ -1361,6 +1373,9 @@ class Reflection(KDE1DMethod):
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
+        out[points[...,0] >= self.upper] = 1
+        out[points[...,0] <= self.lower] = 0
+
         return out
 
     def grid(self, N=None, cut=None):
@@ -1392,8 +1407,6 @@ class Reflection(KDE1DMethod):
             upper = self.upper
 
         weights = self.weights
-        if not weights.shape:
-            weights = None
 
         return dctdensity(exog, self.kernel.dct, bw, lower, upper, N, weights, self.total_weights)
 
@@ -1480,9 +1493,6 @@ class Renormalization(Unbounded):
         if not finite(upper):
             upper = exog.max() + cut*self.bandwidth
         R = upper - lower
-        weights = self.weights
-        if not weights.shape:
-            weights = None
         kernel = self.kernel
 
         # Compute the FFT with enough margin to avoid side effects
@@ -1491,6 +1501,8 @@ class Renormalization(Unbounded):
         comp_N = N + N // 4
         comp_lower = lower - R / 8
         comp_upper = upper + R / 8
+
+        weights = self.weights
 
         mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
 
@@ -1590,8 +1602,6 @@ class LinearCombination(Unbounded):
         upper = self.upper
         exog = self.exog
         weights = self.weights
-        if not weights.shape:
-            weights = None
         kernel = self.kernel
 
         # Range on which the density is to be estimated
@@ -1723,7 +1733,7 @@ def create_transform(obj, inv=None, Dinv=None):
 
 class _transKDE(object):
     def __init__(self, method):
-        self.method = method.method
+        self.method = method
 
 class TransformKDE(KDE1DMethod):
     r"""
@@ -1808,25 +1818,24 @@ class TransformKDE(KDE1DMethod):
         """
         return self._method
 
-    def _trans_kde(self, method, new_method):
-        trans_kde = _transKDE(self)
-        trans_kde.lower = self.trans(self.lower)
-        trans_kde.upper = self.trans(self.upper)
-        trans_kde.exog = self.trans(self.exog)
+    def _trans_kde(self, kde):
+        trans_kde = _transKDE(self.method)
+        trans_kde.lower = self.trans(kde.lower)
+        trans_kde.upper = self.trans(kde.upper)
+        trans_kde.exog = self.trans(kde.exog)
 
-        copy_attrs = [ 'weights', 'adjust', 'kernel'
-                     , 'bandwidth', 'covariance'
-                     , 'total_weights', 'ndim', 'npts' ]
+        copy_attrs = [ 'weights', 'adjust', 'kernel' , 'bandwidth'
+                     , 'total_weights', 'ndim', 'npts', 'axis_type' ]
 
         for attr in copy_attrs:
-            setattr(trans_kde, attr, getattr(self, attr))
+            setattr(trans_kde, attr, getattr(kde, attr))
         return trans_kde
 
 
     @method.setter
     def method(self, m):
         if self._fitted:
-            self._method = m.fit(self._trans_kde())
+            self._method = m.fit(self._trans_kde(self))
         else:
             self._method = m
 
@@ -1883,9 +1892,8 @@ class TransformKDE(KDE1DMethod):
         self._upper = val
 
     # List of attributes to forward to the method object
-    _fwd_attrs = [ 'weights', 'adjust', 'kernel'
-                 , 'bandwidth', 'covariance'
-                 , 'total_weights', 'ndim', 'npts' ]
+    _fwd_attrs = [ 'weights', 'adjust', 'kernel' , 'bandwidth'
+                 , 'total_weights', 'axis_type' ]
 
     def fit(self, kde):
         """
@@ -1895,9 +1903,10 @@ class TransformKDE(KDE1DMethod):
         This method copy, and transform, the various attributes of the KDE.
         """
         fitted = super(TransformKDE, self).fit(kde, False)
+        fitted._clean_attrs()
 
-        trans_method = self.method.fit(fitted._trans_kde())
-        fitted.method = trans_method
+        trans_method = self.method.fit(fitted._trans_kde(kde))
+        fitted._method = trans_method
         fitted._fitted = True
 
         return fitted
@@ -1955,12 +1964,15 @@ class TransformKDE(KDE1DMethod):
         return xs, ys
 
     def transform_axis(self, values):
-        return self.trans.inv
+        return self.trans(values)
+
+    def restore_axis(self, transformed_values):
+        return self.trans.inv(transformed_values)
 
     def transform_bins(self, mesh, bins, axis=-1):
         out = np.empty_like(bins)
         xs = mesh.sparse()[axis]
-        return transform_distribution(mesh, bins, self.trans.Dinv, out=out)
+        return transform_distribution(xs, bins, self.trans.Dinv, out=out)
 
 
 def _add_fwd_attr(cls, to_fwd, attr):

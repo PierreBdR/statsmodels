@@ -65,10 +65,10 @@ class AitchisonAitken(object):
         out[dx==0] = 1 - bw
         return out
 
-    def from_binned(self, mesh, bins, bw, axis=-1):
-        gr = mesh.grid[axis]
-        num_levels = bins.shape[axis]
-        all_vals = np.sum(bins, axis=axis, keepdims=True)
+    def from_binned(self, mesh, bins, bw, dim=-1):
+        gr = mesh.grid[dim]
+        num_levels = bins.shape[dim]
+        all_vals = np.sum(bins, axis=dim, keepdims=True)
         result = bins*(1-bw)
         result += (all_vals - bins) * bw / (num_levels-1)
         return result
@@ -128,4 +128,12 @@ class WangRyzin(object):
         out[...] = (1 - bw)/2 * bw**abs(dx)
         out[dx == 0] = 1 - bw
         return out
+
+    def from_binned(self, mesh, bins, bw, dim=-1):
+        gr = mesh.grid[dim]
+        num_levels = bins.shape[dim]
+        all_vals = np.sum(bins, axis=dim, keepdims=True)
+        result = bins*(1-bw)
+        result += (all_vals - bins) * bw / (num_levels-1)
+        return result
 

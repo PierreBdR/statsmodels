@@ -181,6 +181,7 @@ class ContinuousIMSE(object):
         else:
             test_model.bandwidth = initial_method
         test_est = test_model.fit()
+        print("Initial bandwidth: {0}".format(test_est.bandwidth))
 
         LOO_model = model.copy()
         LOO_model.bandwidth = test_est.bandwidth
@@ -254,6 +255,8 @@ class leastsquare_cv_bandwidth(object):
 
     def __call__(self, model):
         imse = self.imse(model, **self.imse_args)
-        bw = optimize.fmin(imse, x0=imse.init_bandwidth, maxiter=1e3, maxfun=1e3, disp=0, xtol=1e-3)
-        return bw
+        res = optimize.minimize(imse, x0=imse.init_bandwidth, tol=1e-3, options=dict(maxiter=1e3))
+        if not res.success:
+            print("Error, could not find minimum: '{0}'".format(res.message))
+        return imse.init_bandwidth
 

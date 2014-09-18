@@ -14,12 +14,12 @@ ctypedef np.int_t INT
 DEF BOUNDED = 0
 DEF REFLECTED = 1
 DEF CYCLIC = 2
-DEF NON_CONTINUOUS = 3
+DEF DISCRETE = 3
 
 cdef object bin_type_map = dict(b=BOUNDED,
                                 r=REFLECTED,
                                 c=CYCLIC,
-                                n=NON_CONTINUOUS)
+                                d=DISCRETE)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -58,7 +58,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         lower = 0
         upper = M
         delta = (b - a) / M
-    elif bin_type == NON_CONTINUOUS:
+    elif bin_type == DISCRETE:
         shift = -a
         lower = 0
         upper = M-1
@@ -94,7 +94,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         elif bin_type == BOUNDED:
             if val < lower or val > upper:
                 continue # Skip this sample
-        else: # NON_CONTINUOUS
+        else: # DISCRETE
             val = round(val)
             if val < lower or val > upper:
                 continue
@@ -104,7 +104,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
             w = weights[i]
         else:
             w = 1.
-        if bin_type == NON_CONTINUOUS:
+        if bin_type == DISCRETE:
             grid[base_idx] += w
         else:
             rem = val - base_idx
@@ -123,7 +123,7 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
                     grid[base_idx] += (1-rem)*w
                     grid[base_idx+1] += rem*w
 
-    if bin_type == NON_CONTINUOUS:
+    if bin_type == DISCRETE:
         mesh = np.linspace(a, b, M)
         bounds = [a, b]
     else:
@@ -191,7 +191,7 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
     except KeyError as err:
         raise ValueError('Error, invalid bin type: {0}'.format(err.args[0]))
 
-    if bin_type == NON_CONTINUOUS:
+    if bin_type == DISCRETE:
         delta = (b - a)/(M - 1)
     else:
         delta = (b - a)/M
@@ -225,7 +225,7 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
         elif bin_type == BOUNDED:
             if val < lower or val > upper:
                 continue # Skip this sample
-        else: # NON_CONTINUOUS
+        else: # DISCRETE
             val = round(val)
             if val < lower or val > upper:
                 continue # Skip this sample
@@ -289,14 +289,14 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             bin_types[d] = bin_type_map[s_bin_types[d]]
         except KeyError as err:
             raise ValueError("Error, letter '{0}' is invalid. "
-                    "bin_types letters must be one of 'u', 'c', 'r' or 'n'".format(s_bin_types[d]))
+                    "bin_types letters must be one of 'b', 'c', 'r' or 'd'".format(s_bin_types[d]))
 
         if bin_types[d] == CYCLIC:
             delta[d] = (b[d] - a[d]) / M[d]
             shift[d] = -a[d]-delta[d]/2
             lower[d] = 0
             upper[d] = M[d]
-        elif bin_types[d] == NON_CONTINUOUS:
+        elif bin_types[d] == DISCRETE:
             delta[d] = (b[d] - a[d]) / (M[d] - 1)
             shift[d] = -a[d]
             lower[d] = 0
@@ -336,7 +336,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_out = 1
                     break
-            else: # NON_CONTINUOUS
+            else: # DISCRETE
                 val[d] = round(val[d])
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_out = 1
@@ -350,7 +350,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
 
         for d in range(D):
             base_idx[d] = <int> floor(val[d])
-            if bin_types[d] == NON_CONTINUOUS:
+            if bin_types[d] == DISCRETE:
                 rem[d] = 0
             else:
                 rem[d] = val[d] - base_idx[d]
@@ -390,7 +390,7 @@ def fast_linbin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
     mesh = [None]*D
     bounds = np.zeros((D,2), dtype=np.float)
     for d in range(D):
-        if bin_types[d] == NON_CONTINUOUS:
+        if bin_types[d] == DISCRETE:
             mesh[d] = np.linspace(a[d], b[d], M[d])
             bounds[d,0] = a[d]
             bounds[d,1] = b[d]
@@ -436,9 +436,9 @@ def fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
             bin_types[d] = bin_type_map[s_bin_types[d]]
         except KeyError as err:
             raise ValueError("Error, letter '{0}' is invalid. "
-                    "bin_types letters must be one of 'U', 'C', 'R' or 'N'".format(s_bin_types[d]))
+                    "bin_types letters must be one of 'b', 'c', 'r' or 'd'".format(s_bin_types[d]))
 
-        if bin_types[d] == NON_CONTINUOUS:
+        if bin_types[d] == DISCRETE:
             delta[d] = (b[d] - a[d])/(M[d] - 1)
         else:
             delta[d] = (b[d] - a[d])/M[d]
@@ -465,7 +465,7 @@ def fast_bin_nd(np.ndarray[DOUBLE, ndim=2] X not None,
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_in = 0
                     break
-            else: # NON_CONTINUOUS
+            else: # DISCRETE
                 val[d] = round(val[d])
                 if val[d] < lower[d] or val[d] > upper[d]:
                     is_in = 0

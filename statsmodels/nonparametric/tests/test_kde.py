@@ -83,12 +83,9 @@ class TestKDE1D(kde_utils.KDETester):
 
     def test_bandwidths(self):
         k = self.createKDE(self.vs[0], self.methods[0])
-        k.covariance = 0.01
-        est = k.fit()
-        np.testing.assert_almost_equal(est.bandwidth, 0.1)
         k.bandwidth = 0.1
         est = k.fit()
-        np.testing.assert_almost_equal(est.covariance, 0.01)
+        np.testing.assert_almost_equal(est.bandwidth, 0.1)
         k.bandwidth = bandwidths.botev_bandwidth()
         est = k.fit()
         assert est.bandwidth > 0
@@ -170,7 +167,7 @@ class TestISF(kde_utils.KDETester):
         comp_sf, xs = est.isf_grid()
         ref_sf = est.sf(xs)
         acc = max(method.grid_accuracy, method.normed_accuracy)
-        np.testing.assert_allclose(comp_sf, ref_sf, acc, acc)
+        np.testing.assert_allclose(comp_sf.grid[0], ref_sf, acc, acc)
 
     def kernel_works(self, ker, name):
         pass
@@ -204,7 +201,7 @@ class TestICDF(kde_utils.KDETester):
         comp_cdf, xs = est.icdf_grid()
         ref_cdf = est.cdf(xs)
         acc = max(method.grid_accuracy, method.normed_accuracy)
-        np.testing.assert_allclose(comp_cdf, ref_cdf, acc, acc)
+        np.testing.assert_allclose(comp_cdf.grid[0], ref_cdf, acc, acc)
 
     def kernel_works(self, ker, name):
         pass
@@ -283,7 +280,7 @@ class TestCumHazard(kde_utils.KDETester):
     def grid_method_works(self, k, method, name):
         est = k.fit()
         xs, h_comp = est.cumhazard_grid()
-        xs2, sf = est.sf_grid()
+        xs, sf = est.sf_grid()
         sf[sf < 0] = 0 # Some methods can produce negative sf
         h_ref = -np.log(sf)
         sel = sf > np.sqrt(method.accuracy)

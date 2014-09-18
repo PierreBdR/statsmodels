@@ -48,11 +48,11 @@ class UnorderedKDE(KDEMethod):
 
     @property
     def bin_type(self):
-        return 'u'
+        return 'd'
 
     @property
     def to_bin(self):
-        return self._exog
+        return None
 
     def fit(self, kde, compute_bandwidth=True):
         if kde.ndim != 1:
@@ -263,14 +263,18 @@ class UnorderedKDE(KDEMethod):
         weights = self.weights
         if weights.ndim == 0:
             weights = None
-        mesh, bins = fast_bin(self._exog, [0, self.num_levels-1], self.num_levels, weights=weights, bin_type='n')
+        mesh, bins = fast_bin(self._exog, [0, self.num_levels-1], self.num_levels, weights=weights, bin_type='d')
         return mesh, self.from_binned(mesh, bins, True)
 
-    def from_binned(self, mesh, bins, normed=False, axis=-1):
-        result = self.kernel.from_binned(mesh, bins, self.bandwidth, axis)
+    def from_binned(self, mesh, bins, normed=False, dim=-1):
+        result = self.kernel.from_binned(mesh, bins, self.bandwidth, dim)
         if normed:
             result /= self.total_weights
         return result
+
+    transform_axis = None
+    restore_axis = None
+    transform_bins = None
 
 class OrderedKDE(UnorderedKDE):
     def __init__(self):
@@ -288,7 +292,7 @@ class OrderedKDE(UnorderedKDE):
 
     @property
     def bin_type(self):
-        return 'n'
+        return 'd'
 
     def grid_cdf(self, N=None, cut=None):
         mesh, bins = self.grid()
