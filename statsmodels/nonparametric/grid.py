@@ -120,6 +120,16 @@ class Grid(object):
 
     @staticmethod
     def fromSparse(grid, *args, **kwords):
+        """
+        Create a grid from a sparse mesh.
+
+        Parameters
+        ----------
+        grid: list of ndarray
+            This is the result of using `ogrid` or `meshgrid` with `sparse` set to `True`.
+
+        Other arguments are passed to the constructor.
+        """
         return Grid([np.squeeze(g) for g in grid], *args, **kwords)
 
     @staticmethod

@@ -28,6 +28,9 @@ def _compute_bandwidth(kde):
 
 
 class UnorderedKDE(KDEMethod):
+    """
+    Discrete, unordered, univariate method.
+    """
     def __init__(self):
         KDEMethod.__init__(self)
         self._exog = None
@@ -277,6 +280,9 @@ class UnorderedKDE(KDEMethod):
     transform_bins = None
 
 class OrderedKDE(UnorderedKDE):
+    """
+    Discrete, ordered, univariate method.
+    """
     def __init__(self):
         UnorderedKDE.__init__(self)
         self._kernel = kernels.WangRyzin()

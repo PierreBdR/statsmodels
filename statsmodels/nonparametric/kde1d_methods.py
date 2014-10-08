@@ -3,8 +3,8 @@ r"""
 
 This module contains a set of methods to compute univariate KDEs.
 
-These methods provide various variations on :math:`\hat{K}(x;X,h,L,U)`, the 
-modified kernel evaluated on the point :math:`x` based on the estimation points 
+These methods provide various variations on :math:`\hat{K}(x;X,h,L,U)`, the
+modified kernel evaluated on the point :math:`x` based on the estimation points
 :math:`X`, a bandwidth :math:`h` and on the domain :math:`[L,U]`.
 
 The definitions of the methods rely on the following definitions:
@@ -20,11 +20,11 @@ The definitions of the methods rely on the following definitions:
 These definitions correspond to:
 
 - :math:`a_0(l,u)` -- The partial cumulative distribution function
-- :math:`a_1(l,u)` -- The partial first moment of the distribution. In 
-  particular, :math:`a_1(-\infty, \infty)` is the mean of the kernel (i.e. and 
+- :math:`a_1(l,u)` -- The partial first moment of the distribution. In
+  particular, :math:`a_1(-\infty, \infty)` is the mean of the kernel (i.e. and
   should be 0).
-- :math:`a_2(l,u)` -- The partial second moment of the distribution. In 
-  particular, :math:`a_2(-\infty, \infty)` is the variance of the kernel (i.e. 
+- :math:`a_2(l,u)` -- The partial second moment of the distribution. In
+  particular, :math:`a_2(-\infty, \infty)` is the variance of the kernel (i.e.
   which should be close to 1, unless using higher order kernel).
 
 References:
@@ -41,11 +41,11 @@ from .grid import Grid
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
 from .kernels import Kernel1D
-from .grid_interpolation import GridInterpolator
 from .kde_methods import KDEMethod
-from . import bandwidths, kernels
+from . import kernels
 
-def generate_grid(kde, N=None, cut=None):
+
+def generate_grid(kde, N=None, cut=None, span=None):
     r"""
     Helper method returning a regular grid on the domain of the KDE.
 
@@ -64,18 +64,21 @@ def generate_grid(kde, N=None, cut=None):
     A vector of N regularly spaced points
     """
     N = kde.grid_size(N)
-    if cut is None:
-        cut = kde.kernel.cut
-    if kde.lower == -np.inf:
-        lower = np.min(kde.exog) - cut * kde.bandwidth
+    if span is None:
+        if cut is None:
+            cut = kde.kernel.cut
+        if kde.lower == -np.inf:
+            lower = np.min(kde.exog) - cut * kde.bandwidth
+        else:
+            lower = kde.lower
+        if kde.upper == np.inf:
+            upper = np.max(kde.exog) + cut * kde.bandwidth
+        else:
+            upper = kde.upper
     else:
-        lower = kde.lower
-    if kde.upper == np.inf:
-        upper = np.max(kde.exog) + cut * kde.bandwidth
-    else:
-        upper = kde.upper
+        lower, upper = span
     mesh, step = np.linspace(lower, upper, N, endpoint=False, retstep=True)
-    mesh += step/2
+    mesh += step / 2
     return Grid(mesh, bounds=[lower, upper])
 
 def _compute_bandwidth(kde, default):
@@ -122,7 +125,7 @@ def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., dim=
     Notes
     -----
 
-    The basic idea is to evaluate the convolution of of a function on the exog on a point. Anything can be an array if 
+    The basic idea is to evaluate the convolution of of a function on the exog on a point. Anything can be an array if
     you are careful to choose your dimensions. Just remember than the list of exog values will be the last dimension.
     """
     z = (point - exog) / scaling
@@ -142,14 +145,14 @@ def convolve(exog, point, fct, out=None, scaling=1., weights=1., factor=1., dim=
 
 class KDE1DMethod(KDEMethod):
     """
-    Base class providing a default grid method and a default method for 
-    unbounded evaluation of the PDF and CDF. It also provides default methods 
+    Base class providing a default grid method and a default method for
+    unbounded evaluation of the PDF and CDF. It also provides default methods
     for the other metrics, based on PDF and CDF calculations.
 
     :Note:
-        - It is expected that all grid methods will return the same grid if 
+        - It is expected that all grid methods will return the same grid if
           used with the same arguments.
-        - It is fair to assume all array-like arguments will be at least 1D 
+        - It is fair to assume all array-like arguments will be at least 1D
           arrays.
     """
 
@@ -174,7 +177,7 @@ class KDE1DMethod(KDEMethod):
 
     def fit(self, kde, compute_bandwidth=True):
         """
-        Extract the parameters required for the computation and returns 
+        Extract the parameters required for the computation and returns
         a stand-alone estimator capable of performing most computations.
 
         Parameters
@@ -189,8 +192,8 @@ class KDE1DMethod(KDEMethod):
 
         Notes
         -----
-        By default, most values can be adjusted after estimation. However, it 
-        is not allowed to change the number of exogenous variables or the 
+        By default, most values can be adjusted after estimation. However, it
+        is not allowed to change the number of exogenous variables or the
         dimension of the problem.
         """
         if kde.ndim != 1:
@@ -230,7 +233,7 @@ class KDE1DMethod(KDEMethod):
         except TypeError:
             val = np.atleast_1d(val).astype(float)
             assert val.shape == (self.npts,), \
-                    "Adjust must be a single values or a 1D array with value per input point"
+                "Adjust must be a single values or a 1D array with value per input point"
             self._adjust = val
 
     @adjust.deleter
@@ -249,7 +252,7 @@ class KDE1DMethod(KDEMethod):
         """
         Selected bandwidth.
 
-        Unlike the bandwidth for the KDE, this must be an actual value and not 
+        Unlike the bandwidth for the KDE, this must be an actual value and not
         a method.
         """
         return self._bandwidth
@@ -258,7 +261,7 @@ class KDE1DMethod(KDEMethod):
     def bandwidth(self, val):
         val = float(val)
         assert val > 0, "The bandwidth must be strictly positive"
-        self._bandwidth
+        self._bandwidth = val
 
     def update_inputs(self, exog, weights=1., adjust=1.):
         """
@@ -284,7 +287,7 @@ class KDE1DMethod(KDEMethod):
     @property
     def to_bin(self):
         """
-        Property holding to data to be binned. This is useful when the PDF is 
+        Property holding to data to be binned. This is useful when the PDF is
         not evaluated on the real dataset, but on a transformed one.
 
         Returns
@@ -369,7 +372,6 @@ class KDE1DMethod(KDEMethod):
         """
         return self.lower > -np.inf or self.upper < np.inf
 
-
     @numpy_trans1d_method()
     def pdf(self, points, out):
         """
@@ -391,8 +393,8 @@ class KDE1DMethod(KDEMethod):
         :Default: Direct implementation of the formula for unbounded pdf
             computation.
         """
-        return convolve(self.exog, points[...,None], self.kernel.pdf, out,
-                        self.bandwidth*self.adjust, self.weights, self.total_weights)
+        return convolve(self.exog, points[..., None], self.kernel.pdf, out,
+                        self.bandwidth * self.adjust, self.weights, self.total_weights)
 
     def __call__(self, points, out=None):
         """
@@ -409,7 +411,7 @@ class KDE1DMethod(KDEMethod):
 
             cdf(x) = P(X \leq x) = \int_l^x p(t) dt
 
-        where :math:`l` is the lower bound of the distribution domain and 
+        where :math:`l` is the lower bound of the distribution domain and
         :math:`p` the density of probability
 
         Parameters
@@ -442,15 +444,15 @@ class KDE1DMethod(KDEMethod):
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
-        out[points[...,0] >= self.upper] = 1
-        out[points[...,0] <= self.lower] = 0
+        out[points[..., 0] >= self.upper] = 1
+        out[points[..., 0] <= self.lower] = 0
 
         return out
 
     @numpy_trans1d_method()
     def icdf(self, points, out):
         r"""
-        Compute the inverse cumulative distribution (quantile) function, 
+        Compute the inverse cumulative distribution (quantile) function,
         defined as:
 
         .. math::
@@ -473,7 +475,7 @@ class KDE1DMethod(KDEMethod):
 
         Notes
         -----
-        This method first approximates the result using linear interpolation on the CDF and refine the result 
+        This method first approximates the result using linear interpolation on the CDF and refine the result
         numerically using the Newton method.
         """
         xs, ys = self.cdf_grid()
@@ -483,6 +485,7 @@ class KDE1DMethod(KDEMethod):
         upper = self.upper
         cdf = self.cdf
         pdf_out = np.empty(1, dtype=float)
+
         def pdf(x):
             if x <= lower:
                 return 0
@@ -492,18 +495,19 @@ class KDE1DMethod(KDEMethod):
 
         @make_ufunc()
         def find_inverse(p, approx):
-            if p > 1-1e-10:
+            if p > 1 - 1e-10:
                 return upper
             if p < 1e-10:
                 return lower
             if approx >= xs[-1] or approx <= xs[0]:
                 return approx
             cdf_out = np.empty(1, dtype=float)
+
             def f(x):
                 if x <= lower:
                     return -p
                 elif x >= upper:
-                    return 1-p
+                    return 1 - p
                 return cdf(np.atleast_1d(x), cdf_out) - p
             return optimize.newton(f, approx, fprime=pdf, tol=1e-6)
 
@@ -568,7 +572,7 @@ class KDE1DMethod(KDEMethod):
         -----
         Compute :math:`icdf(1-p)`
         """
-        return self.icdf(1-points, out)
+        return self.icdf(1 - points, out)
 
     @numpy_trans1d_method()
     def hazard(self, points, out):
@@ -597,13 +601,13 @@ class KDE1DMethod(KDEMethod):
 
             h(x) = \frac{p(x)}{sf(x)}
 
-        where :math:`p(x)` is the probability density function and 
+        where :math:`p(x)` is the probability density function and
         :math:`sf(x)` is the survival function.
         """
         self.pdf(points, out=out)
         sf = np.empty(out.shape, dtype=out.dtype)
         self.sf(points, sf)
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         out /= sf
         return out
 
@@ -634,18 +638,18 @@ class KDE1DMethod(KDEMethod):
 
             ch(x) = \int_l^x h(t) dt = -\ln sf(x)
 
-        where :math:`l` is the lower bound of the domain, :math:`h` the hazard 
+        where :math:`l` is the lower bound of the domain, :math:`h` the hazard
         function and :math:`sf` the survival function.
         """
         self.sf(points, out)
-        out[out < 0] = 0 # Some methods can produce negative sf
+        out[out < 0] = 0  # Some methods can produce negative sf
         np.log(out, out=out)
         out *= -1
         return out
 
-    def grid(self, N=None, cut=None):
+    def grid(self, N=None, cut=None, span=None):
         """
-        Evaluate the PDF of the distribution on a regular grid with at least 
+        Evaluate the PDF of the distribution on a regular grid with at least
         ``N`` elements.
 
         Parameters
@@ -669,13 +673,13 @@ class KDE1DMethod(KDEMethod):
         using :py:func:`generate_grid`
         """
         N = self.grid_size(N)
-        g = generate_grid(self, N, cut)
+        g = generate_grid(self, N, cut, span)
         out = np.empty(g.shape, dtype=float)
         return g, self.pdf(g.full(), out)
 
     def from_binned(self, mesh, bins, normed=False, dim=-1):
         """
-        Evaluate the PDF from data already binned. The binning might have been high-dimensional but must be of the same 
+        Evaluate the PDF from data already binned. The binning might have been high-dimensional but must be of the same
         data.
 
         Parameters
@@ -697,18 +701,18 @@ class KDE1DMethod(KDEMethod):
         result = np.empty_like(bins)
         if dim < 0:
             dim = mesh.ndim + dim
-        left = np.index_exp[:]*dim
-        right = np.index_exp[:]*(mesh.ndim-dim-1)
+        left = np.index_exp[:] * dim
+        right = np.index_exp[:] * (mesh.ndim - dim - 1)
         pdf = self.kernel.pdf
         if mesh.ndim == 1:
             pts = mesh.grid[dim]
-            convolve(pts, pts[...,None], pdf, result,
+            convolve(pts, pts[..., None], pdf, result,
                      scaling=self.bandwidth * self.adjust,
                      weights=bins)
         else:
             eval_pts = mesh.grid[dim]
             pts = eval_pts.view()
-            pts.shape = (1,) * dim + (len(pts),) + (1,)*(mesh.ndim-dim-1)
+            pts.shape = (1,) * dim + (len(pts),) + (1,) * (mesh.ndim - dim - 1)
             for i, p in enumerate(mesh.grid[dim]):
                 access = left + (i,) + right
                 convolve(pts, p, pdf, result[access],
@@ -721,7 +725,7 @@ class KDE1DMethod(KDEMethod):
 
     def cdf_grid(self, N=None, cut=None):
         """
-        Evaluate the CDF of the distribution on a regular grid with at least 
+        Evaluate the CDF of the distribution on a regular grid with at least
         ``N`` elements.
 
         Parameters
@@ -743,7 +747,7 @@ class KDE1DMethod(KDEMethod):
         By defaults, thie method evaluate :math:`cdf(x)` on a grid generated using :py:func:`generate_grid`
         """
         N = self.grid_size(N)
-        if N <= 2**11:
+        if N <= 2 ** 11:
             g = generate_grid(self, N, cut)
             out = np.empty(g.shape, dtype=float)
             return g, self.cdf(g.full(), out)
@@ -751,7 +755,7 @@ class KDE1DMethod(KDEMethod):
 
     def icdf_grid(self, N=None, cut=None):
         """
-        Compute the inverse cumulative distribution (quantile) function on 
+        Compute the inverse cumulative distribution (quantile) function on
         a grid.
 
         Parameters
@@ -780,7 +784,7 @@ class KDE1DMethod(KDEMethod):
         N = len(xs)
         points = np.linspace(0, 1, N)
         icdf = np.interp(points, ys, xs, self.lower, self.upper)
-        return Grid(points, bounds=[0,1]), icdf
+        return Grid(points, bounds=[0, 1]), icdf
 
     def sf_grid(self, N=None, cut=None):
         r"""
@@ -840,7 +844,7 @@ class KDE1DMethod(KDEMethod):
         N = len(xs)
         points = np.linspace(0, 1, N)
         isf = np.interp(points, ys[::-1], xs[::-1], self.upper, self.lower)
-        return Grid(points, bounds=[0,1]), isf
+        return Grid(points, bounds=[0, 1]), isf
 
     def hazard_grid(self, N=None, cut=None):
         r"""
@@ -867,7 +871,7 @@ class KDE1DMethod(KDEMethod):
         """
         points, out = self.grid(N, cut)
         _, sf = self.sf_grid(N, cut)
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         out /= sf
         return points, out
 
@@ -895,7 +899,7 @@ class KDE1DMethod(KDEMethod):
         Compute explicitly :math:`-\ln sf(x)`
         """
         points, out = self.sf_grid(N, cut)
-        out[out < 0] = 0 # Some methods can produce negative sf
+        out[out < 0] = 0  # Some methods can produce negative sf
         np.log(out, out=out)
         out *= -1
         return points, out
@@ -909,7 +913,7 @@ class KDE1DMethod(KDEMethod):
     @numpy_trans1d_method()
     def numeric_cdf(self, points, out):
         """
-        Provide a numeric approximation of the CDF based on integrating the pdf 
+        Provide a numeric approximation of the CDF based on integrating the pdf
         using :py:func:`scipy.integrate.quad`.
         """
         pts = points.ravel()
@@ -922,12 +926,13 @@ class KDE1DMethod(KDEMethod):
         sp = pts[ix]
 
         pdf_out = np.empty((1,), dtype=float)
+
         def pdf(x):
             return self.pdf(np.array([x]), pdf_out)
 
         @make_ufunc()
         def comp_cdf(i):
-            low = self.lower if i == 0 else sp[i-1]
+            low = self.lower if i == 0 else sp[i - 1]
             if sp[i] == -np.inf:
                 return 0
             elif sp[i] == np.inf:
@@ -944,7 +949,7 @@ class KDE1DMethod(KDEMethod):
 
     def numeric_cdf_grid(self, N=None, cut=None):
         """
-        Compute the CDF on a grid using a trivial, but fast, numeric 
+        Compute the CDF on a grid using a trivial, but fast, numeric
         integration of the pdf.
         """
         pts, pdf = self.grid(N, cut)
@@ -952,10 +957,10 @@ class KDE1DMethod(KDEMethod):
 
     def grid_size(self, N=None):
         if N is None:
-            return 2**10
+            return 2 ** 10
         return N
 
-def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_weights = None, dim=-1):
+def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed=False, total_weights=None, dim=-1):
     """
     Parameters
     ----------
@@ -981,13 +986,13 @@ def fftdensity_from_binned(mesh, bins, kernel_rfft, bw, normed = False, total_we
         dim += mesh.ndim
     FFTData = np.fft.rfft(bins, axis=dim)
 
-    smth = kernel_rfft(bins.shape[dim], mesh.start_interval[dim]/bw)
+    smth = kernel_rfft(bins.shape[dim], mesh.start_interval[dim] / bw)
     if mesh.ndim > 1:
-        smth.shape = (1,)*dim + (len(smth),) + (1,)*(mesh.ndim-dim-1)
+        smth.shape = (1,) * dim + (len(smth),) + (1,) * (mesh.ndim - dim - 1)
 
     SmoothFFTData = FFTData * smth
     density = np.fft.irfft(SmoothFFTData, bins.shape[dim], axis=dim)
-    density /=  mesh.start_interval[dim]
+    density /= mesh.start_interval[dim]
     if normed:
         if total_weights is None:
             total_weights = bins.sum()
@@ -1028,14 +1033,13 @@ def fftdensity(exog, kernel_rfft, bw, lower, upper, N, weights, total_weights):
     -----
     No checks are made to ensure the consistency of the input!
     """
-    R = upper - lower
     mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='c')
     DataHist /= total_weights
     return mesh, fftdensity_from_binned(mesh, DataHist, kernel_rfft, bw)
 
 class Cyclic(KDE1DMethod):
     r"""
-    This method assumes cyclic boundary conditions and works only for closed 
+    This method assumes cyclic boundary conditions and works only for closed
     boundaries.
 
     The estimation is done with a modified kernel given by:
@@ -1052,7 +1056,7 @@ class Cyclic(KDE1DMethod):
 
         z = \frac{x-X}{h}
 
-    When computing grids, if the bandwidth is constant, the result is computing 
+    When computing grids, if the bandwidth is constant, the result is computing
     using FFT.
     """
 
@@ -1090,8 +1094,8 @@ class Cyclic(KDE1DMethod):
         kernel = self.kernel
 
         terms = kernel(z)
-        terms += kernel(z + span) # Add points to the left
-        terms += kernel(z - span) # Add points to the right
+        terms += kernel(z + span)  # Add points to the left
+        terms += kernel(z - span)  # Add points to the right
 
         terms *= self.weights / bw
         terms.sum(axis=-1, out=out)
@@ -1127,23 +1131,23 @@ class Cyclic(KDE1DMethod):
         kernel = self.kernel
 
         terms = kernel.cdf(z)
-        terms -= kernel.cdf((L - exog) / bw) # Remove the parts left of the lower bound
+        terms -= kernel.cdf((L - exog) / bw)  # Remove the parts left of the lower bound
 
-        terms += kernel.cdf(z + span) # Repeat on the left
-        terms -= kernel.cdf((L - exog) / bw + span) # Remove parts left of lower bounds
+        terms += kernel.cdf(z + span)  # Repeat on the left
+        terms -= kernel.cdf((L - exog) / bw + span)  # Remove parts left of lower bounds
 
-        terms += kernel.cdf(z - span) # Repeat on the right
+        terms += kernel.cdf(z - span)  # Repeat on the right
 
         terms *= self.weights
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
-        out[points[...,0] >= self.upper] = 1
-        out[points[...,0] <= self.lower] = 0
+        out[points[..., 0] >= self.upper] = 1
+        out[points[..., 0] <= self.lower] = 0
 
         return out
 
-    def grid(self, N=None, cut=None):
+    def grid(self, N=None, cut=None, span=None):
         """
         FFT-based estimation of KDE estimation, i.e. with cyclic boundary
         conditions. This works only for closed domains, fixed bandwidth
@@ -1158,14 +1162,17 @@ class Cyclic(KDE1DMethod):
         exog = self.exog
         N = self.grid_size(N)
 
-        lower = self.lower
-        upper = self.upper
+        if span is None:
+            lower = self.lower
+            upper = self.upper
 
-        if upper == np.inf:
-            if cut is None:
-                cut = self.kernel.cut
-            lower = np.min(exog) - cut * self.bandwidth
-            upper = np.max(exog) + cut * self.bandwidth
+            if upper == np.inf:
+                if cut is None:
+                    cut = self.kernel.cut
+                lower = np.min(exog) - cut * self.bandwidth
+                upper = np.max(exog) + cut * self.bandwidth
+        else:
+            lower, upper = span
 
         return fftdensity(exog, self.kernel.rfft, bw, lower, upper, N, self.weights, self.total_weights)
 
@@ -1176,13 +1183,13 @@ class Cyclic(KDE1DMethod):
     def grid_size(self, N=None):
         if N is None:
             if self.adjust.shape:
-                return 2**10
-            return 2**16
-        return N # 2 ** int(np.ceil(np.log2(N)))
+                return 2 ** 10
+            return 2 ** 16
+        return N  # 2 ** int(np.ceil(np.log2(N)))
 
 Unbounded = Cyclic
 
-def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_weights=None, dim=-1):
+def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed=False, total_weights=None, dim=-1):
     """
     Parameters
     ----------
@@ -1206,15 +1213,15 @@ def dctdensity_from_binned(mesh, bins, kernel_dct, bw, normed = False, total_wei
     """
     DCTData = fftpack.dct(bins, axis=dim)
 
-    smth = kernel_dct(bins.shape[dim], mesh.start_interval[dim]/bw)
+    smth = kernel_dct(bins.shape[dim], mesh.start_interval[dim] / bw)
     if mesh.ndim > 1:
-        smth.shape = (1,)*dim + (len(smth),) + (1,)*(mesh.ndim-dim-1)
+        smth.shape = (1,) * dim + (len(smth),) + (1,) * (mesh.ndim - dim - 1)
 
     # Smooth the DCTransformed data using t_star
     SmDCTData = DCTData * smth
     # Inverse DCT to get density
     R = mesh.grid[dim][-1] - mesh.grid[dim][0]
-    density = fftpack.idct(SmDCTData, axis=dim) / (2*R)
+    density = fftpack.idct(SmDCTData, axis=dim) / (2 * R)
 
     if normed:
         if total_weights is None:
@@ -1255,8 +1262,6 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
     -----
     No checks are made to ensure the consistency of the input!
     """
-    R = upper - lower
-
     # Histogram the data to get a crude first approximation of the density
     mesh, DataHist = fast_bin(exog, [lower, upper], N, weights=weights, bin_type='r')
 
@@ -1265,9 +1270,9 @@ def dctdensity(exog, kernel_dct, bw, lower, upper, N, weights, total_weights):
 
 class Reflection(KDE1DMethod):
     r"""
-    This method consist in simulating the reflection of the data left and 
-    right of the boundaries. If one of the boundary is infinite, then the 
-    data is not reflected in that direction. To this purpose, the kernel is 
+    This method consist in simulating the reflection of the data left and
+    right of the boundaries. If one of the boundary is infinite, then the
+    data is not reflected in that direction. To this purpose, the kernel is
     replaced with:
 
     .. math::
@@ -1285,7 +1290,7 @@ class Reflection(KDE1DMethod):
 
     See the :py:mod:`pyqt_fit.kde1d_methods` for a description of the various symbols.
 
-    When computing grids, if the bandwidth is constant, the result is computing 
+    When computing grids, if the bandwidth is constant, the result is computing
     using CDT.
     """
 
@@ -1307,7 +1312,7 @@ class Reflection(KDE1DMethod):
         if any(points < self.lower) or any(points > self.upper):
             span = self.upper - self.lower
             points = points - (self.lower + span)
-            points %= 2*span
+            points %= 2 * span
             points -= self.lower + span
             points = np.abs(points)
 
@@ -1346,7 +1351,7 @@ class Reflection(KDE1DMethod):
         if any(points < self.lower) or any(points > self.upper):
             span = self.upper - self.lower
             points = points - (self.lower + span)
-            points %= 2*span
+            points %= 2 * span
             points -= self.lower + span
             points = np.abs(points)
 
@@ -1362,29 +1367,29 @@ class Reflection(KDE1DMethod):
         terms = kernel.cdf(z)
 
         if L > -np.inf:
-            terms -= kernel.cdf((L - exog) / bw) # Remove the truncated part on the left
-            terms += kernel.cdf(z1 - (2 * L / bw)) # Add the reflected part
-            terms -= kernel.cdf((exog - L) / bw) # Remove the truncated part from the reflection
+            terms -= kernel.cdf((L - exog) / bw)  # Remove the truncated part on the left
+            terms += kernel.cdf(z1 - (2 * L / bw))  # Add the reflected part
+            terms -= kernel.cdf((exog - L) / bw)  # Remove the truncated part from the reflection
 
         if U < np.inf:
-            terms += kernel.cdf(z1 - (2 * U / bw)) # Add the reflected part
+            terms += kernel.cdf(z1 - (2 * U / bw))  # Add the reflected part
 
         terms *= self.weights
         terms.sum(axis=-1, out=out)
         out /= self.total_weights
 
-        out[points[...,0] >= self.upper] = 1
-        out[points[...,0] <= self.lower] = 0
+        out[points[..., 0] >= self.upper] = 1
+        out[points[..., 0] <= self.lower] = 0
 
         return out
 
-    def grid(self, N=None, cut=None):
+    def grid(self, N=None, cut=None, span=None):
         """
-        DCT-based estimation of KDE estimation, i.e. with reflection boundary 
-        conditions. This works only for fixed bandwidth (i.e. adjust = 1) and 
+        DCT-based estimation of KDE estimation, i.e. with reflection boundary
+        conditions. This works only for fixed bandwidth (i.e. adjust = 1) and
         gaussian kernel.
 
-        For open domains, the grid is taken with 3 times the bandwidth as extra 
+        For open domains, the grid is taken with 3 times the bandwidth as extra
         space to remove the boundary problems.
         """
         if self.adjust.shape:
@@ -1394,17 +1399,20 @@ class Reflection(KDE1DMethod):
         exog = self.exog
         N = self.grid_size(N)
 
-        if cut is None:
-            cut = self.kernel.cut
+        if span is None:
+            if cut is None:
+                cut = self.kernel.cut
 
-        if self.lower == -np.inf:
-            lower = np.min(exog) - cut * self.bandwidth
+            if self.lower == -np.inf:
+                lower = np.min(exog) - cut * self.bandwidth
+            else:
+                lower = self.lower
+            if self.upper == np.inf:
+                upper = np.max(exog) + cut * self.bandwidth
+            else:
+                upper = self.upper
         else:
-            lower = self.lower
-        if self.upper == np.inf:
-            upper = np.max(exog) + cut * self.bandwidth
-        else:
-            upper = self.upper
+            lower, upper = span
 
         weights = self.weights
 
@@ -1417,14 +1425,14 @@ class Reflection(KDE1DMethod):
     def grid_size(self, N=None):
         if N is None:
             if self.adjust.shape:
-                return 2**10
-            return 2**16
-        return N # 2 ** int(np.ceil(np.log2(N)))
+                return 2 ** 10
+            return 2 ** 16
+        return N  # 2 ** int(np.ceil(np.log2(N)))
 
 class Renormalization(Unbounded):
     r"""
-    This method consists in using the normal kernel method, but renormalize 
-    to only take into account the part of the kernel within the domain of the 
+    This method consists in using the normal kernel method, but renormalize
+    to only take into account the part of the kernel within the domain of the
     density [1]_.
 
     The kernel is then replaced with:
@@ -1474,7 +1482,7 @@ class Renormalization(Unbounded):
             return super(Renormalization, self).cdf(points, out)
         return self.numeric_cdf(points, out)
 
-    def grid(self, N=None, cut=None):
+    def grid(self, N=None, cut=None, span=None):
         if self.adjust.shape:
             return KDE1DMethod.grid(self, N, cut)
         if not self.bounded:
@@ -1485,13 +1493,17 @@ class Renormalization(Unbounded):
         N = self.grid_size(N)
 
         bw = self.bandwidth * self.adjust
-        lower = self.lower
-        upper = self.upper
         exog = self.exog
-        if not finite(lower):
-            lower = exog.min() - cut*self.bandwidth
-        if not finite(upper):
-            upper = exog.max() + cut*self.bandwidth
+
+        if span is None:
+            lower = self.lower
+            upper = self.upper
+            if not finite(lower):
+                lower = exog.min() - cut * self.bandwidth
+            if not finite(upper):
+                upper = exog.max() + cut * self.bandwidth
+        else:
+            lower, upper = span
         R = upper - lower
         kernel = self.kernel
 
@@ -1507,8 +1519,8 @@ class Renormalization(Unbounded):
         mesh, density = fftdensity(exog, kernel.rfft, bw, comp_lower, comp_upper, comp_N, weights, self.total_weights)
 
         mesh = mesh.full()
-        mesh = mesh[shift_N:shift_N+N]
-        density = density[shift_N:shift_N+N]
+        mesh = mesh[shift_N:shift_N + N]
+        density = density[shift_N:shift_N + N]
 
         # Apply renormalization
         l = (mesh - lower) / bw
@@ -1523,7 +1535,7 @@ class _LinearCombinationKernel(Kernel1D):
     def __init__(self, ker):
         self._kernel = ker
 
-    def pdf(self, x, out = None):
+    def pdf(self, x, out=None):
         out = self._kernel(x, out)
         out *= x
         return out
@@ -1587,7 +1599,7 @@ class LinearCombination(Unbounded):
             return super(LinearCombination, self).cdf(points, out)
         return self.numeric_cdf(points, out)
 
-    def grid(self, N=None, cut=None):
+    def grid(self, N=None, cut=None, span=None):
         if self.adjust.shape:
             return KDE1DMethod.grid(self, N, cut)
         if not self.bounded:
@@ -1598,15 +1610,18 @@ class LinearCombination(Unbounded):
         N = self.grid_size(N)
 
         bw = self.bandwidth * self.adjust
-        lower = self.lower
-        upper = self.upper
         exog = self.exog
         weights = self.weights
         kernel = self.kernel
 
         # Range on which the density is to be estimated
-        est_lower = lower if finite(lower) else exog.min() - cut*self.bandwidth
-        est_upper = upper if finite(upper) else exog.max() + cut*self.bandwidth
+        lower = self.lower
+        upper = self.upper
+        if span is None:
+            est_lower = lower if finite(lower) else exog.min() - cut * self.bandwidth
+            est_upper = upper if finite(upper) else exog.max() + cut * self.bandwidth
+        else:
+            est_lower, est_upper = span
         est_R = est_upper - est_lower
 
         # Compute the FFT with enough margin to avoid side effects
@@ -1621,9 +1636,9 @@ class LinearCombination(Unbounded):
         _, z_density = fftdensity(exog, kernel.rfft_xfx, bw, comp_lower, comp_upper, comp_N, weights, total_weights)
 
         grid = mesh.full()
-        grid = grid[shift_N:shift_N+N]
-        density = density[shift_N:shift_N+N]
-        z_density = z_density[shift_N:shift_N+N]
+        grid = grid[shift_N:shift_N + N]
+        density = density[shift_N:shift_N + N]
+        z_density = z_density[shift_N:shift_N + N]
 
         # Apply linear combination approximation
         l = (lower - grid) / bw
@@ -1633,7 +1648,7 @@ class LinearCombination(Unbounded):
         a2 = kernel.pm2(u) - kernel.pm2(l)
 
         density *= a2
-        density -= a1*z_density
+        density -= a1 * z_density
         density /= a2 * a0 - a1 * a1
         grid[0] = 0.
 
@@ -1659,7 +1674,7 @@ def transform_distribution(xs, ys, Dinv, out):
     ys: ndarray
         Distribution value on the points xs
     Dinv: func
-        Function evaluating the derivative of the inverse transformation  
+        Function evaluating the derivative of the inverse transformation
         function
     out: ndarray
         Array in which to store the result
@@ -1707,7 +1722,7 @@ def create_transform(obj, inv=None, Dinv=None):
 
     Notes
     -----
-    The inverse function must be provided, either as argument or as attribute to the object. The derivative of the 
+    The inverse function must be provided, either as argument or as attribute to the object. The derivative of the
     inverse will be estimated numerically if not provided.
 
     All the functions should accept an ``out`` argument to store the result.
@@ -1731,36 +1746,45 @@ def create_transform(obj, inv=None, Dinv=None):
                 return (inv(x + dx) - inv(x - dx)) / (2 * dx)
     return Transform(fct, inv, Dinv)
 
+
 class _transKDE(object):
     def __init__(self, method):
         self.method = method
 
+    def copy(self):
+        res = _transKDE(self.method)
+        res.__dict__.update(self.__dict__)
+        return res
+
+    def fit(self):
+        return self.method.fit(self)
+
 class TransformKDE(KDE1DMethod):
     r"""
-    Compute the Kernel Density Estimate of a dataset, transforming it first to 
+    Compute the Kernel Density Estimate of a dataset, transforming it first to
     a domain where distances are "more meaningful".
 
-    Often, KDE is best estimated in a different domain. This object takes a KDE 
-    object (or one compatible), and 
+    Often, KDE is best estimated in a different domain. This object takes a KDE
+    object (or one compatible), and
     a transformation function.
 
-    Given a random variable :math:`X` of distribution :math:`f_X`, the random 
+    Given a random variable :math:`X` of distribution :math:`f_X`, the random
     variable :math:`Y = g(X)` has a distribution :math:`f_Y` given by:
 
     .. math::
 
         f_Y(y) = \left| \frac{1}{g'(g^{-1}(y))} \right| \cdot f_X(g^{-1}(y))
 
-    In our term, :math:`Y` is the random variable the user is interested in, 
-    and :math:`X` the random variable we can estimate using the KDE. In this 
+    In our term, :math:`Y` is the random variable the user is interested in,
+    and :math:`X` the random variable we can estimate using the KDE. In this
     case, :math:`g` is the transform from :math:`Y` to :math:`X`.
 
-    So to estimate the distribution on a set of points given in :math:`x`, we 
+    So to estimate the distribution on a set of points given in :math:`x`, we
     need a total of three functions:
 
-        - Direct function: transform from the original space to the one in 
+        - Direct function: transform from the original space to the one in
           which the KDE will be perform (i.e. :math:`g^{-1}: y \mapsto x`)
-        - Invert function: transform from the KDE space to the original one 
+        - Invert function: transform from the KDE space to the original one
           (i.e. :math:`g: x \mapsto y`)
         - Derivative of the invert function
 
@@ -1772,8 +1796,8 @@ class TransformKDE(KDE1DMethod):
         ----------
         trans:
             Either a simple function, or a function object with
-            attributes `inv` and `Dinv` to use in case they are not provided as 
-            arguments. The helper :py:func:`create_transform` will provide numeric 
+            attributes `inv` and `Dinv` to use in case they are not provided as
+            arguments. The helper :py:func:`create_transform` will provide numeric
             approximation of the derivative if required.
         method:
             instance of KDE1DMethod used in the transformed domain.
@@ -1786,8 +1810,8 @@ class TransformKDE(KDE1DMethod):
 
         Notes
         -----
-        all given functions should accept an optional ``out`` argument to get 
-        a pre-allocated array to store its result. 
+        all given functions should accept an optional ``out`` argument to get
+        a pre-allocated array to store its result.
         Also the ``out`` parameter may be one of the input argument.
         """
         super(TransformKDE, self).__init__()
@@ -1797,8 +1821,9 @@ class TransformKDE(KDE1DMethod):
         self._method = method
         self._clean_attrs()
 
-    _to_clean = [ '_bandwidth', '_adjust'
-                , '_weights', '_kernel', '_total_weights' ]
+    _to_clean = ['_bandwidth', '_adjust',
+                 '_weights', '_kernel', '_total_weights']
+
     def _clean_attrs(self):
         """
         Remove attributes not needed for this class
@@ -1824,13 +1849,12 @@ class TransformKDE(KDE1DMethod):
         trans_kde.upper = self.trans(kde.upper)
         trans_kde.exog = self.trans(kde.exog)
 
-        copy_attrs = [ 'weights', 'adjust', 'kernel' , 'bandwidth'
-                     , 'total_weights', 'ndim', 'npts', 'axis_type' ]
+        copy_attrs = ['weights', 'adjust', 'kernel', 'bandwidth',
+                      'total_weights', 'ndim', 'npts', 'axis_type']
 
         for attr in copy_attrs:
             setattr(trans_kde, attr, getattr(kde, attr))
         return trans_kde
-
 
     @method.setter
     def method(self, m):
@@ -1892,12 +1916,12 @@ class TransformKDE(KDE1DMethod):
         self._upper = val
 
     # List of attributes to forward to the method object
-    _fwd_attrs = [ 'weights', 'adjust', 'kernel' , 'bandwidth'
-                 , 'total_weights', 'axis_type' ]
+    _fwd_attrs = ['weights', 'adjust', 'kernel', 'bandwidth',
+                  'total_weights', 'axis_type']
 
     def fit(self, kde):
         """
-        Method called by the KDE object right after fitting to allow for 
+        Method called by the KDE object right after fitting to allow for
         one-time calculation.
 
         This method copy, and transform, the various attributes of the KDE.
@@ -1919,8 +1943,10 @@ class TransformKDE(KDE1DMethod):
         self.method(pts, out=pdf)
         return transform_distribution(pts, pdf, trans.Dinv, out=out)
 
-    def grid(self, N=None, cut=None):
-        xs, ys = self.method.grid(N, cut)
+    def grid(self, N=None, cut=None, span=None):
+        if span is not None:
+            span = self.trans(span[0]), self.trans(span[1])
+        xs, ys = self.method.grid(N, cut, span)
         trans = self.trans
         out = np.empty(ys.shape, ys.dtype)
         transform_distribution(xs.full(), ys, trans.Dinv, out=out)
@@ -1953,7 +1979,7 @@ class TransformKDE(KDE1DMethod):
         self.trans.inv(ys, out=ys)
         return xs, ys
 
-    def isf(self, points, out = None):
+    def isf(self, points, out=None):
         out = self.method.isf(points, out)
         self.trans.inv(out, out=out)
         return out
@@ -1981,6 +2007,7 @@ def _add_fwd_attr(cls, to_fwd, attr):
         doc = getattr(fwd_obj, '__doc__')
     except AttributeError:
         doc = 'Attribute forwarded to {}'.format(to_fwd)
+
     def getter(self):
         return getattr(getattr(self, to_fwd), attr)
 
@@ -1991,4 +2018,3 @@ def _add_fwd_attr(cls, to_fwd, attr):
 
 for attr in TransformKDE._fwd_attrs:
     _add_fwd_attr(TransformKDE, 'method', attr)
-

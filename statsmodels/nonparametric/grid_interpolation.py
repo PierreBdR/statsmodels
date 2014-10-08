@@ -31,9 +31,15 @@ class GridInterpolator(object):
 
     @property
     def ndim(self):
+        """
+        Number of dimensions of the grid
+        """
         return self._ndim
 
     def eval1d(self, pts, out=None):
+        """
+        wrapper function for the 1D case
+        """
         pts = np.asarray(pts).astype(float)
         if pts.ndim == 0:
             pts = np.array([pts], dtype=float)
@@ -47,6 +53,9 @@ class GridInterpolator(object):
         return out.squeeze()
 
     def evalnd(self, pts, out=None):
+        """
+        wrapper function for the nD case
+        """
         pts = np.asarray(pts).astype(float)
         if pts.ndim == 1:
             pts = np.array([pts], dtype=float)
@@ -62,4 +71,17 @@ class GridInterpolator(object):
         return out.squeeze()
 
     def __call__(self, pts, out=None):
+        """
+        Interpolate values over the grid
+
+        Parameters
+        ----------
+        pts: ndarray
+            (N,D) array for N points in D dimension with the list of points to interpolate the data on
+
+        Returns
+        -------
+        ndarray
+            1D array with the value on each point
+        """
         return self._call(pts, out)

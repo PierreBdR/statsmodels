@@ -1,9 +1,9 @@
 from __future__ import print_function, absolute_import, division
 import numpy as np
-from ..compat.python import range, zip
-from scipy import optimize, interpolate
-from .grid import Grid
+from ..compat.python import range
+from scipy import optimize
 from .grid_interpolation import GridInterpolator
+
 
 class LeaveOneOut(object):
     """
@@ -36,6 +36,7 @@ class LeaveOneOut(object):
             sel[i] = False
             yield (i, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
             sel[i] = True
+
 
 class LeaveOneOutSampling(object):
     """
@@ -73,9 +74,10 @@ class LeaveOneOutSampling(object):
             yield (k, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
             sel[k] = True
 
+
 class LeaveKOutFolding(object):
     """
-    Implement a variation on Leave-One-Out where the dataset is tiled into k folds. At each iteration, one fold is used 
+    Implement a variation on Leave-One-Out where the dataset is tiled into k folds. At each iteration, one fold is used
     for testing, while the others are used for fitting.
 
     Parameters
@@ -100,7 +102,7 @@ class LeaveKOutFolding(object):
         folds = [None] * folding
         cur_idx = 0
         for i in range(rem):
-            end_idx = cur_idx + fold_size +1
+            end_idx = cur_idx + fold_size + 1
             folds[i] = idx[cur_idx:end_idx]
             cur_idx = end_idx
 
@@ -125,18 +127,19 @@ class LeaveKOutFolding(object):
             yield (f, tuple(d[sel] if is_sel[i] else d for i, d in enumerate(data)))
             sel[f] = True
 
+
 def leave_some_out(exog, *data, **kwords):
     '''
     This function selected between the various LeaveOut objects.
 
-    Each object will take a list of arrays. The first array must be the exogeneous dataset. Other arrays are either 
-    "scalar" or arrays. If they are scalars, they will be passed along at each yield, if they are arrays, they must have 
+    Each object will take a list of arrays. The first array must be the exogeneous dataset. Other arrays are either
+    "scalar" or arrays. If they are scalars, they will be passed along at each yield, if they are arrays, they must have
     the same length as the exogeneous dataset and they will be filtered in the same way.
 
-    The object can be iterated on and return a tuples whose first element is the index(es) of the element(s) left out, 
+    The object can be iterated on and return a tuples whose first element is the index(es) of the element(s) left out,
     and the second element is a tuple of same size of `data` with what is to be used for the arrays.
 
-    If no parameter is specified beside the data, then an exhaustive leave-one-out is performed. 'sampling' and 
+    If no parameter is specified beside the data, then an exhaustive leave-one-out is performed. 'sampling' and
     'folding' parameters are exclusive and cannot be both specified.
 
     Parameters
@@ -144,7 +147,7 @@ def leave_some_out(exog, *data, **kwords):
     exog: ndarray
         1D or 2D array with the data to fit. The first dimension is the number of points in the dataset.
     *data: tuple
-        Other arrays or values to select for. If the value doesn't have the same length as exog, then it will be sent 
+        Other arrays or values to select for. If the value doesn't have the same length as exog, then it will be sent
         as-is all the times. Otherwise, it will be selected like exog.
 
     Optional Parameters
@@ -152,7 +155,7 @@ def leave_some_out(exog, *data, **kwords):
     sampling: int
         Instead of an exhaustive leave-one-out, a random sub-sample is iterated over
     folding: int
-        The exogeneous dataset is split into k groups of same length. For each iteration, (k-1) groups are used for 
+        The exogeneous dataset is split into k groups of same length. For each iteration, (k-1) groups are used for
         fitting and the last one is used for testing.
     '''
     sampling = kwords.get('sampling', None)
@@ -173,7 +176,14 @@ def leave_some_out(exog, *data, **kwords):
 
 
 class ContinuousIMSE(object):
-    def __init__(self, model, initial_method = None, grid_size = None, use_grid = False, **loo_args):
+    """
+    Compute the integrated mean square error for continuous axes.
+
+    Notes
+    -----
+    We need to check how different it would be for discrete axes.
+    """
+    def __init__(self, model, initial_method=None, grid_size=None, use_grid=False, **loo_args):
         from . import bandwidths
         test_model = model.copy()
         if initial_method is None:
@@ -181,12 +191,11 @@ class ContinuousIMSE(object):
         else:
             test_model.bandwidth = initial_method
         test_est = test_model.fit()
-        print("Initial bandwidth: {0}".format(test_est.bandwidth))
+        #print("Initial bandwidth: {0}".format(test_est.bandwidth))
 
         LOO_model = model.copy()
         LOO_model.bandwidth = test_est.bandwidth
         LOO_est = LOO_model.fit()
-        min_bw = np.min(test_est.bandwidth)*1e-9
 
         self.LOO = leave_some_out(test_est.exog, test_est.weights, test_est.adjust, **loo_args)
         self.bw_min = test_est.bandwidth * 1e-3
@@ -207,9 +216,8 @@ class ContinuousIMSE(object):
 
         LOO_est.bandwidth = test_est.bandwidth = bw
         exog = test_est.exog
-        npts = test_est.npts
         Fx, Fy = test_est.grid(N=self.grid_size)
-        F = Fx.integrate(Fy**2)
+        F = Fx.integrate(Fy ** 2)
         L = 0
         use_grid = self.use_grid
         interp = None
@@ -222,7 +230,8 @@ class ContinuousIMSE(object):
             else:
                 vals = LOO_est.pdf(exog[i])
             L += np.sum(vals)
-        return F - 2*L / self.LOO.nb_tests
+        return F - 2 * L / self.LOO.nb_tests
+
 
 class leastsquare_cv_bandwidth(object):
     """
@@ -246,7 +255,7 @@ class leastsquare_cv_bandwidth(object):
         Method used to get the initial estimate for the bandwidth
     """
 
-    def __init__(self, imse = None, imse_args = {}):
+    def __init__(self, imse=None, imse_args={}):
         if imse is None:
             self.imse = ContinuousIMSE
         else:
@@ -255,8 +264,8 @@ class leastsquare_cv_bandwidth(object):
 
     def __call__(self, model):
         imse = self.imse(model, **self.imse_args)
-        res = optimize.minimize(imse, x0=imse.init_bandwidth, tol=1e-3, options=dict(maxiter=1e3))
+        res = optimize.minimize(imse, x0=imse.init_bandwidth, tol=1e-3, options=dict(maxiter=1e3), method='Nelder-Mead')
         if not res.success:
             print("Error, could not find minimum: '{0}'".format(res.message))
-        return imse.init_bandwidth
-
+            return imse.init_bandwidth
+        return res.x
