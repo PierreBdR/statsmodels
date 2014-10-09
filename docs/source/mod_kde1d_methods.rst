@@ -36,12 +36,15 @@ These definitions correspond to:
 Estimation Methods
 ------------------
 
-Default: :py:class:`KDE1DMethod`
-````````````````````````````````
+:py:class:`KDE1DMethod`
+```````````````````````
 
-The default method can only estimate the KDE for unbounded domains. The
-probability density function is estimated by an explicit convolution performed
-on the evaluation points.
+This is the base class, that implement most of the methods. The other classes
+will typically specialize their implementation for efficiency and to handle
+boundaries correctly.
+
+This is the method you should inherit from if you want to implement your own 1D
+estimation method.
 
 :py:class:`Cyclic`
 ``````````````````

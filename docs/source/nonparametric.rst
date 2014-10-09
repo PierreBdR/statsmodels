@@ -81,6 +81,9 @@ The public functions and classes are
 
    mod_kde
    mod_kde1d_methods
+   mod_kdend_methods
+   mod_kdenc_methods
+   mod_kde_multivariate
 
 ..   kde.KDE
 ..   kde_utils.AxesType
