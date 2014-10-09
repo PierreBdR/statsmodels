@@ -8,17 +8,18 @@ from __future__ import division, absolute_import, print_function
 import numpy as np
 from statsmodels.compat.python import range
 from copy import copy as shallow_copy
-from .fast_linbin import fast_linbin as fast_bin
 from . import kernels, kernelsnc
-from . import kde1d_methods, kdenc_methods, bandwidths
-from .kde_utils import numpy_trans_method, AxesType
-from .kde_methods import KDEMethod, _array_arg
+from . import kde1d_methods, kdenc_methods
+from .kde_utils import numpy_trans_method, AxesType, namedtuple
+from .kde_methods import KDEMethod
 from .bandwidths import KDE1DAdaptor
 from .fast_linbin import fast_linbin_nd as fast_bin_nd
 
+AxesMethods = namedtuple("AxesMethods", ["methods", "kernels"])
+
 def _compute_bandwidth(kde, default):
     """
-    Compute the bandwidth and covariance for the estimated model, based of its 
+    Compute the bandwidth and covariance for the estimated model, based of its
     exog attribute
     """
     n = kde.ndim
@@ -46,6 +47,11 @@ def _compute_bandwidth(kde, default):
 class MultivariateKDE(KDEMethod):
     """
     This class works as an adaptor for various 1D methods to work together.
+
+    Parameters
+    ----------
+    **kwords: dict
+        Can be used to set at construction time any attribute
     """
     def __init__(self, **kwords):
         KDEMethod.__init__(self)
@@ -66,14 +72,26 @@ class MultivariateKDE(KDEMethod):
                 raise ValueError("Error, unknown attribute '{}'".format(k))
 
     def copy(self):
+        """
+        Creates a shallow copy of the object
+        """
         return shallow_copy(self)
 
     @property
     def kernels(self):
+        """
+        Kernels for earch dimension.
+
+        Before fitting, this should be a dictionnary, associating for some dimensions the kernel you want. Any dimension
+        non-present in this dictionnary will be given a default kernel depending on its axis type.
+        """
         return self._kernels
 
     @property
     def continuous_method(self):
+        """
+        Default method for continuous axes
+        """
         return self._methods_type['c']
 
     @continuous_method.setter
@@ -82,6 +100,9 @@ class MultivariateKDE(KDEMethod):
 
     @property
     def ordered_method(self):
+        """
+        Default method for ordered axes
+        """
         return self._methods_type['o']
 
     @ordered_method.setter
@@ -90,6 +111,9 @@ class MultivariateKDE(KDEMethod):
 
     @property
     def unordered_method(self):
+        """
+        Default method for unordered axes
+        """
         return self._methods_type['u']
 
     @unordered_method.setter
@@ -133,13 +157,19 @@ class MultivariateKDE(KDEMethod):
     def upper(self):
         return self._upper
 
-    @property
-    def kernels(self):
-        return self._kernels
-
     def get_methods(self, axis_types):
-        m = [None]*len(axis_types)
-        k = [None]*len(axis_types)
+        """
+        Get the list of methods and kernels for each axis (after fitting only)
+
+        Returns
+        -------
+        methods: list of methods
+            Methods per axis
+        kernels: list of kernels
+            Kernel per axis
+        """
+        m = [None] * len(axis_types)
+        k = [None] * len(axis_types)
         for i, t in enumerate(axis_types):
             try:
                 m[i] = self._methods[i]
@@ -149,15 +179,23 @@ class MultivariateKDE(KDEMethod):
                 k[i] = self._kernels[i]
             except (IndexError, KeyError):
                 k[i] = self._kernels_type[t].for_ndim(1)
-        return m, k
+        return AxesMethods(m, k)
 
     @property
     def methods(self):
+        """
+        Methods for each axes.
+
+        Before fitting, this should be a dictionnary specifying the methods for the axes that won't use the default
+        ones.
+
+        After fitting, this is a list of methods, one per axis.
+        """
         return self._methods
 
     def fit(self, kde):
         if len(kde.axis_type) == 1:
-            axis_type = AxesType(kde.axis_type[0]*kde.ndim)
+            axis_type = AxesType(kde.axis_type[0] * kde.ndim)
         else:
             axis_type = AxesType(kde.axis_type)
         if len(axis_type) != kde.ndim:
@@ -210,7 +248,7 @@ class MultivariateKDE(KDEMethod):
                 self._bin_data = self._exog.copy()
                 for d, m in enumerate(self.methods):
                     if m.to_bin is not None:
-                        self._bin_data[:,d] = m.to_bin
+                        self._bin_data[:, d] = m.to_bin
             return self._bin_data
         return self._exog
 
@@ -237,17 +275,17 @@ class MultivariateKDE(KDEMethod):
         self._adjust = adjust
         bin_data = None
         for d, m in enumerate(self.methods):
-            m.update_inputs(exog[:,d], weights, adjust)
+            m.update_inputs(exog[:, d], weights, adjust)
             if m.to_bin is not None:
                 bin_data = True
         self._bin_data = bin_data
 
-    def grid_size(self, N = None):
+    def grid_size(self, N=None):
         if N is None:
             p2 = self.base_p2 // self.ndim
             if self.base_p2 % self.ndim > 0:
                 p2 += 1
-            return 2**p2
+            return 2 ** p2
         return N
 
     def grid(self, N=None, cut=None):
@@ -256,9 +294,9 @@ class MultivariateKDE(KDEMethod):
         bounds = np.c_[self.lower, self.upper]
 
         if cut is None:
-            cut = [ getattr(m.kernel, 'cut', None) for m in self.methods ]
+            cut = [getattr(m.kernel, 'cut', None) for m in self.methods]
         elif np.isscalar(cut):
-            cut = [cut]*self.ndim
+            cut = [cut] * self.ndim
 
         for d in range(self.ndim):
             m = self.methods[d]
@@ -267,9 +305,9 @@ class MultivariateKDE(KDEMethod):
             else:
                 l, u = bounds[d]
             if l == -np.inf:
-                bounds[d,0] = to_bin[:,d].min() - cut[d] * m.bandwidth
+                bounds[d, 0] = to_bin[:, d].min() - cut[d] * m.bandwidth
             if u == np.inf:
-                bounds[d,1] = to_bin[:,d].max() + cut[d] * m.bandwidth
+                bounds[d, 1] = to_bin[:, d].max() + cut[d] * m.bandwidth
 
         N = self.grid_size(N)
         mesh, binned = fast_bin_nd(to_bin, bounds, N, self.weights, bin_types)
@@ -284,4 +322,3 @@ class MultivariateKDE(KDEMethod):
         mesh.transform([m.restore_axis for m in self.methods])
 
         return mesh, binned
-

@@ -54,6 +54,9 @@ used. Currently, only 1D KDE supports bounded domains.
 Basic Usage
 -----------
 
+The univariate case
+```````````````````
+
 Let's start with a simple example. We will generate some random data, create the
 model and start an estimation::
 
@@ -77,8 +80,13 @@ values associated to it::
 
 .. plot:: plots/nonparametric_kde_example.py
 
-Advanced Usage
---------------
+The multi-variate case
+``````````````````````
+
+What if we have a multi-variate dataset?
+
+Estimation of the bandwidth
+---------------------------
 
 Using cross-validation to compute the bandwidth
 ```````````````````````````````````````````````
