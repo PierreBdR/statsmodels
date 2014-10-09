@@ -2,7 +2,6 @@
 
 .. _nonparametric:
 
-
 Nonparametric Methods :mod:`nonparametric`
 ==========================================
 
@@ -20,24 +19,31 @@ statsmodels.
 Kernel density estimation
 -------------------------
 
-The kernel density estimation (KDE) functionality is split between univariate
-and multivariate estimation, which are implemented in quite different ways.
+The kernel density estimation (KDE) is split among a variety of classes
+implementing various boundery conditions or estimation methods. All these
+classes are accessed through the :py:class:`kde.KDE` class. Through this class
+you can perform univariate, multi-dimensional or multi-variate density
+estimation.
 
-Univariate estimation (as provided by `KDEUnivariate`) uses FFT transforms,
-which makes it quite fast.  Therefore it should be preferred for *continuous,
-univariate* data if speed is important.  It supports using different kernels;
-bandwidth estimation is done only by a rule of thumb (Scott or Silverman).
+Depending on the type of boundary conditions and variables (e.g. continuous or
+discrete), the estimation can make use of FFT or DCT transformations for fast
+estimation of the density on a regular grid. The various methods let the user
+choose the kernel, as well as the bandwidth estimation method.
 
-Multivariate estimation (as provided by `KDEMultivariate`) uses product
-kernels.   It supports least squares and maximum likelihood cross-validation
-for bandwidth estimation, as well as estimating mixed continuous, ordered and
-unordered data.  The default kernels (Gaussian, Wang-Ryzin and
-Aitchison-Aitken) cannot be altered at the moment however.  Direct estimation
-of the conditional density (:math:`P(X | Y) = P(X, Y) / P(Y)`) is supported
-by `KDEMultivariateConditional`.
+The main interface estimation is described in the :py:mod:`kde` module, the
+bandwidth estimation methods in the :py:mod:`bandwidths` module, and the kernels
+in the :py:mod:`kernels` modules.
 
-`KDEMultivariate` can do univariate estimation as well, but is up to two orders
-of magnitude slower than `KDEUnivariate`.
+.. Multivariate estimation (as provided by `KDEMultivariate`) uses product
+   kernels. It supports least squares and maximum likelihood cross-validation
+   for bandwidth estimation, as well as estimating mixed continuous, ordered and
+   unordered data. The default kernels (Gaussian, Wang-Ryzin and
+   Aitchison-Aitken) cannot be altered at the moment however.  Direct estimation
+   of the conditional density (:math:`P(X | Y) = P(X, Y) / P(Y)`) is supported
+   by `KDEMultivariateConditional`.
+
+.. `KDEMultivariate` can do univariate estimation as well, but is up to two
+   orders of magnitude slower than `KDEUnivariate`.
 
 
 Kernel regression
@@ -65,30 +71,46 @@ References
   Data Mining, Inference, and Prediction", Springer, 2009.
 
 
-Module Reference
+Sub-Modules
 ----------------
 
 The public functions and classes are
 
+.. toctree::
+   :maxdepth: 2
+
+   mod_kde
+   mod_kde1d_methods
+
+..   kde.KDE
+..   kde_utils.AxesType
+..   grid.Grid
+..   kde1d_methods
+
+helper functions to manage the KDE objects
+
 .. autosummary::
    :toctree: generated/
 
-   smoothers_lowess.lowess
-   kde.KDEUnivariate
-   kernel_density.KDEMultivariate
-   kernel_density.KDEMultivariateConditional
-   kernel_density.EstimatorSettings
-   kernel_regression.KernelReg
-   kernel_regression.KernelCensoredReg
+   grid.Grid
+   kde_utils.AxesTypes
+   grid_interpolation.GridInterpolator
+   fast_linbin.fast_linbin
+   fast_linbin.fast_linbin_nd
 
-helper functions for kernel bandwidths
+bandwidth methods
 
 .. autosummary::
    :toctree: generated/
 
-   bandwidths.bw_scott
-   bandwidths.bw_silverman
-   bandwidths.select_bandwidth
+   bandwidths.silverman_bandwidth
+   bandwidths.scotts_bandwidth
+   bandwidths.silverman_bandwidth_full
+   bandwidths.scotts_bandwidth_full
+   bandwidths.botev_bandwidth
+   bandwidths.leastsquare_cv_bandwidth
+   bandwidths.MultivariateBandwidth
+
 
 There are some examples for nonlinear functions in
 :mod:`statsmodels.nonparametric.dgp_examples`

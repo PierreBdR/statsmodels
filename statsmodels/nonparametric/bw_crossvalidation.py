@@ -234,7 +234,7 @@ class ContinuousIMSE(object):
 
 
 class leastsquare_cv_bandwidth(object):
-    """
+    r"""
     Implement the Cross-Validation Least Square bandwidth estimation method.
 
     Notes
@@ -249,10 +249,12 @@ class leastsquare_cv_bandwidth(object):
 
     This is the general formula for the IMSE.
 
-    Attributes
+    Parameters
     ----------
-    initial_method: fun
-        Method used to get the initial estimate for the bandwidth
+    imse: class
+        Class from which the Integrated Mean Square Error object is created.. If not provided, it will use :py:class:`ContinuousIMSE`
+    imse_args: dictionary
+        Arguments for the creation of the IMSE object.
     """
 
     def __init__(self, imse=None, imse_args={}):

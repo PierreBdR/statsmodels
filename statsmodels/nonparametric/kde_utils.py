@@ -8,9 +8,9 @@ from __future__ import division, print_function, absolute_import
 from ..compat.python import string_types
 import numpy as np
 import inspect
-from .namedtuple import namedtuple
 from ..compat.python import range
 import functools
+from .namedtuple import namedtuple  # NOQA need to be defined here
 
 # Find the largest float available for this numpy
 if hasattr(np, 'float128'):
@@ -32,18 +32,18 @@ def atleast_2df(*arys):
     for ary in arys:
         ary = np.asanyarray(ary)
         if ary.ndim == 0:
-            ary = ary.reshape(1,1)
+            ary = ary.reshape(1, 1)
         elif ary.ndim == 1:
-            ary = ary[:,np.newaxis]
+            ary = ary[:, np.newaxis]
         res.append(ary)
     if len(res) == 1:
         return res[0]
     return res
 
-def make_ufunc(nin = None, nout=1):
+def make_ufunc(nin=None, nout=1):
     """
-    Decorator used to create a ufunc using `np.frompyfunc`. Note that the 
-    returns array will always be of dtype 'object'. You should use the `out` if 
+    Decorator used to create a ufunc using `np.frompyfunc`. Note that the
+    returns array will always be of dtype 'object'. You should use the `out` if
     you know the wanted type for the output.
 
     :param int nin: Number of input. Default is found by using
@@ -112,7 +112,7 @@ def _process_trans_args(z, out, input_dim, output_dim, in_dtype, out_dtype):
 
 def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=float):
     """
-    Decorator to create a function taking a single array-like argument and return a numpy array with the same number of 
+    Decorator to create a function taking a single array-like argument and return a numpy array with the same number of
     points.
 
     The function will always get an input and output with the last index corresponding to the dimension of the problem.
@@ -127,12 +127,12 @@ def numpy_trans(input_dim, output_dim, out_dtype=None, in_dtype=float):
                   1D.
 
     output_dim: int
-        Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or 
+        Dimension of the output. If more than 1, the last index of the output array is the dimension. It cannot be 0 or
         less.
 
     out_dtype: dtype or None
         Expected types of the output array.
-        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
+        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
 
     in_dtype: dtype or None
@@ -189,24 +189,24 @@ def _process_trans1d_args(z, dims, out, in_dtype, out_dtype):
     if dims is not None:
         if ndims > 1:
             if out.shape[1] > ndims:
-                return z, out, [out[...,d] for d in dims], True
-            return z, out, [out[...,i] for i in range(len(dims)) ], True
+                return z, out, [out[..., d] for d in dims], True
+            return z, out, [out[..., i] for i in range(len(dims))], True
         else:
-            return z[...,dims[0]], out, out[...,dims[0]], False
+            return z[..., dims[0]], out, out[..., dims[0]], False
     return z, out, out, False
 
 def numpy_trans1d(out_dtype=None, in_dtype=None):
     """
     This decorator helps provide a uniform interface to 1D numpy transformation functions.
 
-    The returned function takes any array-like argument and transform it as a 1D ndarray sent to the decorated function. 
-    If the `out` argument is not provided, it will be allocated with the same size and shape as the first argument. And 
+    The returned function takes any array-like argument and transform it as a 1D ndarray sent to the decorated function.
+    If the `out` argument is not provided, it will be allocated with the same size and shape as the first argument. And
     as with the first argument, it will be reshaped as a 1D ndarray before being sent to the function.
 
     Examples
     --------
 
-    The following example illustrate how a 2D array will be passed as 1D, and the output allocated as the input 
+    The following example illustrate how a 2D array will be passed as 1D, and the output allocated as the input
     argument:
 
     >>> @numpy_trans1d()
@@ -220,13 +220,14 @@ def numpy_trans1d(out_dtype=None, in_dtype=None):
         out_dtype = np.dtype(out_dtype)
     if in_dtype is not None:
         in_dtype = np.dtype(in_dtype)
+
     def decorator(fct):
         @functools.wraps(fct)
         def f(z, out=None, dims=None):
             z, out, write_out, iterate = _process_trans1d_args(z, dims, out, in_dtype, out_dtype)
             if iterate:
                 for d, o in zip(dims, write_out):
-                    fct(z[...,d], o)
+                    fct(z[..., d], o)
             else:
                 fct(z, write_out)
             return out
@@ -235,7 +236,7 @@ def numpy_trans1d(out_dtype=None, in_dtype=None):
 
 def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=float):
     """
-    Decorator to create a method taking a single array-like argument and return a numpy array with the same number of 
+    Decorator to create a method taking a single array-like argument and return a numpy array with the same number of
     points.
 
     The function will always get an input and output with the last index corresponding to the dimension of the problem.
@@ -251,13 +252,13 @@ def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=float):
         If a string, it should be the name of an attribute containing the input dimension.
 
     output_dim: int or str
-        Dimension of the output. If more than 1, the last index of the output array is the dimension. If cannot be 0 or 
+        Dimension of the output. If more than 1, the last index of the output array is the dimension. If cannot be 0 or
         less.
         If a string, it should be the name of an attribute containing the output dimension
 
     out_dtype: dtype or None
         Expected types of the output array.
-        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is 
+        If the output array is created by this function, dtype specifies its type. If dtype is None, the output array is
         given the same as the input array, unless it is an integer, in which case the output will be a float64.
 
     in_dtype: dtype or None
@@ -287,6 +288,7 @@ def numpy_trans_method(input_dim, output_dim, out_dtype=None, in_dtype=float):
         out_dtype = np.dtype(out_dtype)
     if in_dtype is not None:
         in_dtype = np.dtype(in_dtype)
+
     # Decorator itself
     def decorator(fct):
         @functools.wraps(fct)
@@ -306,13 +308,14 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
         out_dtype = np.dtype(out_dtype)
     if in_dtype is not None:
         in_dtype = np.dtype(in_dtype)
+
     def decorator(fct):
         @functools.wraps(fct)
         def f(self, z, out=None, dims=None):
             z, out, write_out, iterate = _process_trans1d_args(z, dims, out, in_dtype, out_dtype)
             if iterate:
                 for d, o in zip(dims, write_out):
-                    fct(self, z[...,d], o)
+                    fct(self, z[..., d], o)
             else:
                 fct(self, z, out=write_out)
             return out
@@ -320,7 +323,20 @@ def numpy_trans1d_method(out_dtype=None, in_dtype=None):
     return decorator
 
 class AxesType(object):
-    _dtype = np.dtype(np.str_).char+'1'
+    """
+    Class defining the type of each axis.
+
+    The type of each axis is defined as a single letter. The basic types are:
+
+        'c'
+            Continuous axis
+        'u'
+            Discrete, un-ordered, axis
+        'o'
+            Discrete, ordered, axis
+    """
+    _dtype = np.dtype(np.str_).char + '1'
+
     def __init__(self, value='c'):
         self._types = np.empty((), dtype=self._dtype)
         self.set(value)
@@ -376,8 +392,6 @@ class AxesType(object):
         if isinstance(other, AxesType):
             return self._types != other._types
         return self._types != other
-
-
 
 #
 from scipy import sqrt

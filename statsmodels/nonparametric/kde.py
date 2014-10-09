@@ -1,7 +1,7 @@
 r"""
 Module implementing kernel-based estimation of density of probability.
 
-Given a kernel :math:`K`, the density function is estimated from a sampling 
+Given a kernel :math:`K`, the density function is estimated from a sampling
 :math:`X = \{X_i \in \mathbb{R}^n\}_{i\in\{1,\ldots,m\}}` as:
 
 .. math::
@@ -11,8 +11,8 @@ Given a kernel :math:`K`, the density function is estimated from a sampling
 
     W = \sum_{i=1}^m w_i
 
-where :math:`h` is the bandwidth of the kernel, :math:`w_i` are the weights of 
-the data points and :math:`\lambda_i` are the adaptation factor of the kernel 
+where :math:`h` is the bandwidth of the kernel, :math:`w_i` are the weights of
+the data points and :math:`\lambda_i` are the adaptation factor of the kernel
 width.
 
 The kernel is a function of :math:`\mathbb{R}^n` such that:
@@ -20,21 +20,21 @@ The kernel is a function of :math:`\mathbb{R}^n` such that:
 .. math::
 
     \begin{array}{rclcl}
-       \idotsint_{\mathbb{R}^n} f(\mathbf{z}) d\mathbf{z} 
+       \idotsint_{\mathbb{R}^n} f(\mathbf{z}) d\mathbf{z}
        & = & 1 & \Longleftrightarrow & \text{$f$ is a probability}\\
-       \idotsint_{\mathbb{R}^n} \mathbf{z}f(\mathbf{z}) d\mathbf{z} &=& 
-       \mathbf{0} & \Longleftrightarrow & \text{$f$ is 
+       \idotsint_{\mathbb{R}^n} \mathbf{z}f(\mathbf{z}) d\mathbf{z} &=&
+       \mathbf{0} & \Longleftrightarrow & \text{$f$ is
        centered}\\
-       \forall \mathbf{u}\in\mathbb{R}^n, \|\mathbf{u}\| 
-       = 1\qquad\int_{\mathbb{R}} t^2f(t \mathbf{u}) dt &\approx& 
-       1 & \Longleftrightarrow & \text{The co-variance matrix of $f$ is close 
+       \forall \mathbf{u}\in\mathbb{R}^n, \|\mathbf{u}\|
+       = 1\qquad\int_{\mathbb{R}} t^2f(t \mathbf{u}) dt &\approx&
+       1 & \Longleftrightarrow & \text{The co-variance matrix of $f$ is close
        to be the identity.}
     \end{array}
 
-The constraint on the covariance is only required to provide a uniform meaning 
+The constraint on the covariance is only required to provide a uniform meaning
 for the bandwidth of the kernel.
 
-If the domain of the density estimation is bounded to the interval 
+If the domain of the density estimation is bounded to the interval
 :math:`[L,U]`, the density is then estimated with:
 
 .. math::
@@ -42,7 +42,7 @@ If the domain of the density estimation is bounded to the interval
     f(x) \triangleq \frac{1}{hW} \sum_{i=1}^n \frac{w_i}{\lambda_i}
     \hat{K}(x;X,\lambda_i h,L,U)
 
-where :math:`\hat{K}` is a modified kernel that depends on the exact method 
+where :math:`\hat{K}` is a modified kernel that depends on the exact method
 used. Currently, only 1D KDE supports bounded domains.
 
 References
@@ -73,8 +73,12 @@ class KDE(object):
     r"""
     Prepare a nD kernel density estimation, possible on a bounded domain.
 
-    :param ndarray exog: 2D array DxN with the N input points in D dimension.
-    :param dict kwords: setting attributes at construction time.
+    Parameters
+    ----------
+    exog: ndarray
+        2D array DxN with the N input points in D dimension.
+    kwords: dict
+        setting attributes at construction time.
         Any named argument will be equivalent to setting the property
         after the fact. For example::
 
@@ -85,9 +89,18 @@ class KDE(object):
 
             >>> k = KDE1D(xs)
             >>> k.lower = 0
+
+    Notes
+    -----
+
+    This is the object from which you define and prepare your model. Once prepared, the model needs to be fitted, which
+    returns an estimator object.
+
+    The model knows about a set number of parameters that all methods must account for. However, check on the method's
+    documentation to make sure if there aren't other parameters.
+
     """
     def __init__(self, exog, **kwords):
-
         self._exog = None
         self._lower = -np.inf
         self._upper = np.inf
@@ -122,6 +135,9 @@ class KDE(object):
 
     @property
     def lower(self):
+        """
+        List with the lower bound for the domain on each dimension. None for automatic computation of the bound.
+        """
         return self._lower
 
     @lower.setter
@@ -134,6 +150,9 @@ class KDE(object):
 
     @property
     def upper(self):
+        """
+        List with the upper bound for the domain on each dimension. None for automatic computation of the bound.
+        """
         return self._upper
 
     @upper.setter
@@ -146,6 +165,9 @@ class KDE(object):
 
     @property
     def exog(self):
+        """
+        2D array with exogenous data. The array has shape NxD for N points in D dimension.
+        """
         return self._exog
 
     @exog.setter
@@ -155,14 +177,23 @@ class KDE(object):
 
     @property
     def ndim(self):
+        """
+        Number of dimensions of the problem.
+        """
         return self._exog.shape[1]
 
     @property
     def npts(self):
+        """
+        Number of points in the problem.
+        """
         return self._exog.shape[0]
 
     @property
     def axis_type(self):
+        """
+        Set the types of Axis. Defined in :py:class:`AxesTypes`
+        """
         return self._axis_type
 
     @axis_type.setter
@@ -189,6 +220,9 @@ class KDE(object):
 
     @property
     def weights(self):
+        """
+        1D array containing, for each point, its weight.
+        """
         return self._weights
 
     @weights.setter
@@ -207,6 +241,9 @@ class KDE(object):
 
     @property
     def adjust(self):
+        """
+        Multiplicating factor to apply to the bandwidth: it can be a single value or a 1D array.
+        """
         return self._adjust
 
     @adjust.setter
@@ -222,6 +259,9 @@ class KDE(object):
 
     @property
     def bandwidth(self):
+        """
+        Method to estimate the bandwidth, or bandwidth to use.
+        """
         return self._bandwidth
 
     @bandwidth.setter
@@ -230,6 +270,9 @@ class KDE(object):
 
     @property
     def kernel(self):
+        """
+        Kernel to use for the bandwidth estimation.
+        """
         return self._kernel
 
     @kernel.setter
@@ -244,7 +287,9 @@ class KDE(object):
 
     @property
     def total_weights(self):
+        """
+        Sum of the weights of the exogenous data points.
+        """
         if self._weights.ndim == 0:
             return self.npts
         return np.sum(self.weights)
-

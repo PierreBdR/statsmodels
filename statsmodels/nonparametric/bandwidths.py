@@ -1,3 +1,9 @@
+"""
+Module containing the methods for continuous, univariate, KDE estimations.
+
+:Author: Barbier de Reuille, Pierre
+
+"""
 from __future__ import division, absolute_import, print_function
 import numpy as np
 from scipy import fftpack, optimize, linalg

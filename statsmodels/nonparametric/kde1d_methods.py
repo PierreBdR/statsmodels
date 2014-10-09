@@ -1,7 +1,7 @@
 r"""
-:Author: Pierre Barbier de Reuille <pierre.barbierdereuille@gmail.com>
-
 This module contains a set of methods to compute univariate KDEs.
+
+:Author: Pierre Barbier de Reuille <pierre.barbierdereuille@gmail.com>
 
 These methods provide various variations on :math:`\hat{K}(x;X,h,L,U)`, the
 modified kernel evaluated on the point :math:`x` based on the estimation points
@@ -164,6 +164,9 @@ class KDE1DMethod(KDEMethod):
 
     @property
     def axis_type(self):
+        """
+        Instance of AxesType describing the axis (e.g. always 'c')
+        """
         return AxesType('c')
 
     @axis_type.setter

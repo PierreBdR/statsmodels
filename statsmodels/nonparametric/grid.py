@@ -6,27 +6,24 @@ from ..compat.python import range, zip
 class Grid(object):
     """
     Object representing a grid.
+
+    Parameters
+    ----------
+    grid_axes: list of ndarray
+        Each ndarray can have at most 1 dimension with more than 1 element. This dimension contains the position of
+        each point on the axis
+    bounds: ndarray
+        This is a Dx2 array. For each dimension, the lower and upper bound of the axes (doesn't have to correspond
+        to the min and max of the axes.
+    bin_types: str
+        A string with as many letter as there are dimensions. For each dimension, gives the kind of axes. Can be one
+        of 'B', 'R', 'C' or 'N' (See :py:attr:`bin_types`). If a single letter is provided, this is the class for
+        all axes. If not specified, the default is 'B'.
+    edges: list of ndarray
+        If provided, should be a list with one array per dimension. Each array should have one more element than the
+        bin for that dimension. These represent the edges of the bins.
     """
     def __init__(self, grid_axes, bounds=None, bin_types=None, edges=None, dtype=None):
-        """
-        Create a grid from a full or sparse grid as returned by meshgrid or a 1D grid.
-
-        Parameters
-        ----------
-        grid_axes: list of ndarray
-            Each ndarray can have at most 1 dimension with more than 1 element. This dimension contains the position of 
-            each point on the axis
-        bounds: ndarray
-            This is a Dx2 array. For each dimension, the lower and upper bound of the axes (doesn't have to correspond 
-            to the min and max of the axes.
-        bin_types: str
-            A string with as many letter as there are dimensions. For each dimension, gives the kind of axes. Can be one 
-            of 'B', 'R', 'C' or 'N' (See :py:attr:`bin_types`). If a single letter is provided, this is the class for 
-            all axes. If not specified, the default is 'B'.
-        edges: list of ndarray
-            If provided, should be a list with one array per dimension. Each array should have one more element than the 
-            bin for that dimension. These represent the edges of the bins.
-        """
         self._interval = None
         if isinstance(grid_axes, Grid):
             self._grid = grid_axes.grid
@@ -359,7 +356,7 @@ class Grid(object):
         Parameters
         ----------
         fcts: fun or list of fun or dict of int: fun
-            Either a single function, a list with one function per dimension or 
+            Either a single function, a list with one function per dimension or
             a dictionnary giving, for a set of axis, how to transform them.
         '''
         if callable(fcts):
