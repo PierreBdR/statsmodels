@@ -1,6 +1,5 @@
 from __future__ import division, absolute_import, print_function
 
-from .. import kde
 from .. import kde1d_methods, bandwidths
 import numpy as np
 from numpy.random import randn
@@ -20,16 +19,16 @@ class TestBandwidth(object):
     def setUpClass(cls):
         cls.ratios = np.array([1., 2., 5.])
         d = randn(500)
-        cls.vs = cls.ratios[:, np.newaxis]*np.array([d, d, d])
-        cls.ss = [ bandwidths._spread(X) for X in cls.vs ]
+        cls.vs = cls.ratios[:, np.newaxis] * np.array([d, d, d])
+        cls.ss = [bandwidths._spread(X) for X in cls.vs]
 
     def methods(self, m):
         bws = np.asfarray([m(FakeModel(v)) for v in self.vs])
-        assert bws.shape == (3,1)
-        rati = bws[:,0] / self.ss
-        assert sum((rati - rati[0])**2) < 1e-6
-        rati = bws[:,0] / bws[0]
-        assert sum((rati - self.ratios)**2) < 1e-6
+        assert bws.shape == (3, 1)
+        rati = bws[:, 0] / self.ss
+        assert sum((rati - rati[0]) ** 2) < 1e-6
+        rati = bws[:, 0] / bws[0]
+        assert sum((rati - self.ratios) ** 2) < 1e-6
 
     def test_variance_methods(self):
         yield self.methods, bandwidths.silverman_bandwidth
@@ -39,9 +38,9 @@ class TestBandwidth(object):
         bws = np.array([bandwidths.botev_bandwidth()(FakeModel(v)) for v in self.vs])
         assert bws.shape == (3,)
         rati = bws / self.ss
-        assert sum((rati - rati[0])**2) < 1e-6
+        assert sum((rati - rati[0]) ** 2) < 1e-6
         rati = bws / bws[0]
-        assert sum((rati - self.ratios)**2) < 1e-6
+        assert sum((rati - self.ratios) ** 2) < 1e-6
 
 
 class TestKDE1D(kde_utils.KDETester):
@@ -123,16 +122,16 @@ class TestSF(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est, N=2**8)
+        xs = kde1d_methods.generate_grid(est, N=2 ** 8)
         sf = est.sf(xs.linear())
         cdf = est.cdf(xs.linear())
-        np.testing.assert_allclose(sf, 1-cdf, method.accuracy, method.accuracy)
+        np.testing.assert_allclose(sf, 1 - cdf, method.accuracy, method.accuracy)
 
     def grid_method_works(self, k, method, name):
         est = k.fit()
         xs, sf = est.sf_grid()
         _, cdf = est.cdf_grid()
-        np.testing.assert_allclose(sf, 1-cdf, method.accuracy, method.accuracy)
+        np.testing.assert_allclose(sf, 1 - cdf, method.accuracy, method.accuracy)
 
     def kernel_works(self, ker, name):
         pass
@@ -158,7 +157,7 @@ class TestISF(kde_utils.KDETester):
         est = k.fit()
         sf = np.linspace(0, 1, 64)
         sf_xs = est.isf(sf)
-        cdf_xs = est.icdf(1-sf)
+        cdf_xs = est.icdf(1 - sf)
         acc = max(method.accuracy, method.normed_accuracy)
         np.testing.assert_allclose(sf_xs, cdf_xs, acc, acc)
 
@@ -194,7 +193,7 @@ class TestICDF(kde_utils.KDETester):
         xs = est.icdf(quant)
         cdf_quant = est.cdf(xs)
         acc = max(method.accuracy, method.normed_accuracy)
-        np.testing.assert_allclose(cdf_quant, quant,  acc, acc)
+        np.testing.assert_allclose(cdf_quant, quant, acc, acc)
 
     def grid_method_works(self, k, method, name):
         est = k.fit()
@@ -226,12 +225,12 @@ class TestHazard(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est, N=2**8)
+        xs = kde1d_methods.generate_grid(est, N=2 ** 8)
         h_comp = est.hazard(xs.linear())
         sf = est.sf(xs.linear())
         h_ref = est.pdf(xs.linear())
         sf = est.sf(xs.linear())
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         h_ref /= sf
         sel = sf > np.sqrt(method.accuracy)
         np.testing.assert_allclose(h_comp[sel], h_ref[sel], method.accuracy, method.accuracy)
@@ -240,7 +239,7 @@ class TestHazard(kde_utils.KDETester):
         est = k.fit()
         xs, h_comp = est.hazard_grid()
         xs, sf = est.sf_grid()
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         h_ref = est.grid()[1]
         h_ref /= sf
         sel = sf > np.sqrt(method.accuracy)
@@ -269,10 +268,10 @@ class TestCumHazard(kde_utils.KDETester):
 
     def method_works(self, k, method, name):
         est = k.fit()
-        xs = kde1d_methods.generate_grid(est, N=2**8)
+        xs = kde1d_methods.generate_grid(est, N=2 ** 8)
         h_comp = est.cumhazard(xs.linear())
         sf = est.sf(xs.linear())
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         h_ref = -np.log(sf)
         sel = sf > np.sqrt(method.accuracy)
         np.testing.assert_allclose(h_comp[sel], h_ref[sel], method.accuracy, method.accuracy)
@@ -281,7 +280,7 @@ class TestCumHazard(kde_utils.KDETester):
         est = k.fit()
         xs, h_comp = est.cumhazard_grid()
         xs, sf = est.sf_grid()
-        sf[sf < 0] = 0 # Some methods can produce negative sf
+        sf[sf < 0] = 0  # Some methods can produce negative sf
         h_ref = -np.log(sf)
         sel = sf > np.sqrt(method.accuracy)
         # Only tests for sf big enough or error is too large
@@ -303,4 +302,3 @@ class TestLogCumHazard(TestCumHazard):
 if __name__ == "__main__":
     import nose
     nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb'], exit=False)
-

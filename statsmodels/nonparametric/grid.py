@@ -7,7 +7,7 @@ class Grid(object):
     """
     Object representing a grid.
 
-    Can be converted to a full array using "np.asarray" function.
+    Can be converted to a full array using "np.array" function.
 
     Parameters
     ----------
@@ -49,17 +49,17 @@ class Grid(object):
             if dtype is not None and dtype != grid_axes._dtype:
                 self._dtype = dtype
                 self._bounds = self._bounds.astype(dtype)
-                self._grid = [ g.astype(dtype) for d in self._grid ]
+                self._grid = [d.astype(dtype) for d in self._grid]
                 if self._edges is not None:
-                    self._edges = [ e.astype(dtype) for e in self._edges ]
+                    self._edges = [e.astype(dtype) for e in self._edges]
             return
         first_elemt = np.asarray(grid_axes[0])
         if first_elemt.ndim == 0:
             ndim = 1
-            grid_axes = [ np.asarray(grid_axes) ]
+            grid_axes = [np.asarray(grid_axes)]
         else:
             ndim = len(grid_axes)
-            grid_axes = [ np.asarray(ax) for ax in grid_axes ]
+            grid_axes = [np.asarray(ax) for ax in grid_axes]
         if dtype is None:
             dtype = np.find_common_type([ax.dtype for ax in grid_axes], [])
         for d in range(ndim):
@@ -71,6 +71,8 @@ class Grid(object):
         self._ndim = ndim
         if bin_types is None:
             bin_types = 'B' * ndim
+        else:
+            bin_types = str(bin_types)
         if len(bin_types) == 1:
             bin_types = bin_types * ndim
         elif len(bin_types) != ndim:
@@ -85,23 +87,24 @@ class Grid(object):
             if bin_types[d] == 'N':
                 expected_bounds[d] = [ax[0], ax[-1]]
             else:
-                expected_bounds[d] = [(3*ax[0]-ax[1])/2, (3*ax[-1]-ax[-2])/2]
+                expected_bounds[d] = [(3 * ax[0] - ax[1]) / 2, (3 * ax[-1] - ax[-2]) / 2]
 
         if bounds is None:
             bounds = expected_bounds
         else:
             bounds = np.asarray(bounds)
             if bounds.ndim == 1:
-                bounds = bounds[None,:]
-            diff_bounds = np.sqrt(np.sum((expected_bounds - bounds)**2)) / sum(expected_bounds[:,1] - expected_bounds[:,0])
+                bounds = bounds[None, :]
+            diff_bounds = (np.sqrt(np.sum((expected_bounds - bounds) ** 2)) /
+                           sum(expected_bounds[:, 1] - expected_bounds[:, 0]))
             # If bounds are un-expected
             if edges is None and diff_bounds > 1e-5:
                 self._bounds = bounds
-                self.edges # pre-compute edges as they are probably not regular
+                self.edges  # pre-compute edges as they are probably not regular
         self._bounds = bounds
 
     def __repr__(self):
-        dims = 'x'.join(str(s)+bt for s, bt in zip(self.shape, self.bin_types))
+        dims = 'x'.join(str(s) + bt for s, bt in zip(self.shape, self.bin_types))
         lims = '[{}]'.format(" ; ".join('{0:g} - {1:g}'.format(b[0], b[1]) for b in self.bounds))
         return "<Grid {0}, {1}, dtype={2}>".format(dims, lims, self.dtype)
 
@@ -109,12 +112,12 @@ class Grid(object):
         """
         Deep-copy the content of the grid
         """
-        grid = [ g.copy() for g in self._grid ]
+        grid = [g.copy() for g in self._grid]
         bounds = self._bounds.copy()
         if self.edges is None:
             edges = None
         else:
-            edge = [ e.copy() for e in self._edges ]
+            edges = [e.copy() for e in self._edges]
         return Grid(grid, bounds, self.bin_types, edges, self.dtype)
 
     @staticmethod
@@ -145,8 +148,8 @@ class Grid(object):
             ndim = grid.shape[0]
         if len(grid_shape) != ndim:
             raise ValueError("This is not a valid grid")
-        grid_axes = [None]*ndim
-        selector = [0]*ndim
+        grid_axes = [None] * ndim
+        selector = [0] * ndim
         for d in range(ndim):
             selector[d] = np.s_[:]
             if order == 'F':
@@ -165,15 +168,15 @@ class Grid(object):
         try:
             grid = np.asarray(grid).squeeze()
             if not np.issubdtype(grid.dtype, np.number):
-                raise ValueError('Is not full numeric grid')
-            if grid.ndim == 2: # Cannot happen for full grid
-                raise ValueError('Is not full numeric grid')
-            ndim = grid.ndim-1
+                raise ValueError('Argument is not a full numeric grid')
+            if grid.ndim == 2:  # Cannot happen for full grid
+                raise ValueError('Argument is not a full numeric grid')
+            ndim = grid.ndim - 1
             if grid.shape[-1] == ndim:
                 return Grid.fromFull(grid, 'F', *args, **kwords)
             elif grid.shape[0] == ndim:
                 return Grid.fromFull(grid, 'C', *args, **kwords)
-        except ValueError as ex:
+        except ValueError:
             return Grid.fromSparse(grid, *args, **kwords)
         raise ValueError("Couldn't find what kind of grid this is.")
 
@@ -190,16 +193,31 @@ class Grid(object):
         Types of the axes.
 
         The valid types are:
-            - B: Bounded -- The axes is on a bounded domain. During binning, any values outside the domain is ignored, 
-              while during interpolation, such values are put back to the closest boundary.
-            - R: Reflective -- The axes are infinite, but the data are 'reflected' at the boundaries. Any point outside 
-              the domain is put back inside by reflection on the boundaries.
-            - C: Cyclic -- The axes are infinite, but the data is cyclic. Any point outside the defined domain is put 
-              back inside using the cyclic nature of the function.
-            - N: Non-continuous -- The axes are finite and non-continuous. Any data outside the domain is ignored both 
-              for interpolation and binning. Also, interpolation is to the nearest value.
+            - B: Bounded -- The axes is on a bounded domain. During binning, any values outside the domain is ignored,
+                while during interpolation, such values are put back to the closest boundary.
+            - R: Reflective -- The axes are infinite, but the data are 'reflected' at the boundaries. Any point outside
+                the domain is put back inside by reflection on the boundaries.
+            - C: Cyclic -- The axes are infinite, but the data is cyclic. Any point outside the defined domain is put
+                back inside using the cyclic nature of the function.
+            - N: Non-continuous -- The axes are finite and non-continuous. Any data outside the domain is ignored both
+                for interpolation and binning. Also, interpolation is to the nearest value.
+
+        Notes
+        -----
+        If bin_types is specified with a single letter, all dimensions will be given the new type.
         """
         return self._bin_types
+
+    @bin_types.setter
+    def bin_types(self, bin_types):
+        bin_types = str(bin_types)
+        if any(c not in 'BRCN' for c in bin_types):
+            raise ValueError("Error, the letters in 'bin_types' must be one of 'BRCN'")
+        if len(bin_types) == 1:
+            bin_types = bin_types * self.ndim
+        if len(bin_types) != self.ndim:
+            raise ValueError("Error, 'bin_types' must have either one letter or one letter per dimension")
+        self._bin_types = bin_types
 
     @property
     def shape(self):
@@ -215,13 +233,12 @@ class Grid(object):
             Edges of the bins for each dimension
         """
         if self._edges is None:
-            edges = [ np.empty((s+1,), dtype=self.dtype) for s in self._shape ]
-            bin_types = self.bin_types
+            edges = [np.empty((s + 1,), dtype=self.dtype) for s in self._shape]
             for d, (es, bnd, ax, bn) in enumerate(zip(edges, self.bounds, self.grid, self.bin_types)):
                 if bn == 'd':
-                    es[:] = np.arange(len(ax)+1) - 0.5
+                    es[:] = np.arange(len(ax) + 1) - 0.5
                 else:
-                    es[1:-1] = (ax[1:] + ax[:-1])/2
+                    es[1:-1] = (ax[1:] + ax[:-1]) / 2
                     es[0] = bnd[0]
                     es[-1] = bnd[1]
             self._edges = edges
@@ -233,7 +250,7 @@ class Grid(object):
         list of ndarray
             Position of the bins for each dimensions
         """
-        return self._grid
+        return tuple(self._grid)
 
     @property
     def dtype(self):
@@ -253,7 +270,7 @@ class Grid(object):
     @property
     def start_interval(self):
         """
-        For each dimension, the distance between the two first edges, or if there are no edges, the distance between the 
+        For each dimension, the distance between the two first edges, or if there are no edges, the distance between the
         two first bins (which will be the same thing ...).
         """
         if self._interval is None:
@@ -275,7 +292,7 @@ class Grid(object):
         Notes: this requires computed edges if they are not already present
         """
         edges = self.edges
-        return [ es[1:] - es[:-1] for es in edges ]
+        return [es[1:] - es[:-1] for es in edges]
 
     @property
     def start_volume(self):
@@ -304,7 +321,13 @@ class Grid(object):
         m = broadcast_arrays(*np.meshgrid(*self._grid, indexing='ij', sparse='True', copy='False'))
         if order is 'C':
             return np.asarray(m)
-        return np.dstack(m)
+        return np.concatenate([mm[..., None] for mm in m], axis=-1)
+
+    def __array__(self):
+        """
+        Convert as a full array
+        """
+        return self.full()
 
     def linear(self):
         """
@@ -375,7 +398,7 @@ class Grid(object):
                     self.grid[i] = f(self.grid[i])
         return self
 
-    def integrate(self, values = None):
+    def integrate(self, values=None):
         """
         Integrate values over the grid
 
@@ -384,9 +407,9 @@ class Grid(object):
         if values is None:
             return np.sum(self.bin_volumes())
         values = np.asarray(values)
-        return np.sum(values*self.bin_volumes())
+        return np.sum(values * self.bin_volumes())
 
-    def cum_integrate(self, values = None):
+    def cum_integrate(self, values=None):
         """
         Integrate values over the grid and return the cumulative values
 
@@ -401,3 +424,50 @@ class Grid(object):
             out.cumsum(axis=d, out=out)
         return out
 
+    def __eq__(self, other):
+        if not isinstance(other, Grid):
+            return NotImplemented
+        if self.shape != other.shape:
+            return False
+        if self.bin_types != other.bin_types:
+            return False
+        if (self.bounds != other.bounds).any():
+            return False
+        if any((g1 != g2).any() for (g1, g2) in zip(self.grid, other.grid)):
+            return False
+        if self._edges is not None or other._edges is not None:
+            if any((g1 != g2).any() for (g1, g2) in zip(self.edges, other.edges)):
+                return False
+        return True
+
+    def almost_equal(self, other, rtol=1e-6, atol=1e-8):
+        """
+        Check for two grids to be almost equal
+
+        Parameters
+        ----------
+        other: Grid
+            Grid to compare
+        rtol: float
+            Relative tolerance
+        atol: float
+            Absolute tolerance. If None, this will be the same as rtol
+
+        See Also
+        --------
+        `np.allclose`
+        """
+        if atol is None:
+            atol = rtol
+        if self.shape != other.shape:
+            return False
+        if self.bin_types != other.bin_types:
+            return False
+        if not np.allclose(self.bounds, other.bounds, rtol, atol):
+            return False
+        if any(not np.allclose(g1, g2, rtol, atol) for (g1, g2) in zip(self.grid, other.grid)):
+            return False
+        if self._edges is not None or other._edges is not None:
+            if any(not np.allclose(g1, g2, rtol, atol) for (g1, g2) in zip(self.edges, other.edges)):
+                return False
+        return True

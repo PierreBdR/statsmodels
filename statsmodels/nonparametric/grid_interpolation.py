@@ -16,7 +16,7 @@ class GridInterpolator(object):
         """
         if not isinstance(grid, Grid):
             grid = Grid.fromArrays(grid)
-        self._grid = [ np.ascontiguousarray(grid[i], float) for i in range(grid.ndim) ]
+        self._grid = [np.ascontiguousarray(grid[i], float) for i in range(grid.ndim)]
         self._values = np.asarray(values, float)
         if self._values.shape != grid.shape:
             raise ValueError("The values must have the same shape as the grid")
@@ -46,8 +46,8 @@ class GridInterpolator(object):
         elif pts.ndim > 1:
             raise ValueError("Error, the input array must be a float or 1D")
         if out is None:
-            out = np.zeros(pts.shape,dtype=float)
-        _grid_interpolation.interp1d(pts, self._bounds[0,0], self._bounds[0,1],
+            out = np.zeros(pts.shape, dtype=float)
+        _grid_interpolation.interp1d(pts, self._bounds[0, 0], self._bounds[0, 1],
                                      self._grid, self._values, self._bin_types,
                                      out)
         return out.squeeze()
@@ -64,8 +64,8 @@ class GridInterpolator(object):
         if pts.shape[-1] != self.ndim:
             raise ValueError("Error, {0} dimensions expected, but pts has {1}".format(self.ndim, pts.shape[-1]))
         if out is None:
-            out = np.zeros(pts.shape[:-1],dtype=float)
-        _grid_interpolation.interpnd(pts, self._bounds[:,0], self._bounds[:,1],
+            out = np.zeros(pts.shape[:-1], dtype=float)
+        _grid_interpolation.interpnd(pts, self._bounds[:, 0], self._bounds[:, 1],
                                      self._grid, self._values, self._bin_types,
                                      out)
         return out.squeeze()

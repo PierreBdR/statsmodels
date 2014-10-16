@@ -17,10 +17,10 @@ DEF REFLECTED = 1
 DEF CYCLIC = 2
 DEF DISCRETE = 3
 
-cdef object bin_type_map = dict(b=BOUNDED,
-                                r=REFLECTED,
-                                c=CYCLIC,
-                                d=DISCRETE)
+cdef object bin_type_map = dict(B=BOUNDED,
+                                R=REFLECTED,
+                                C=CYCLIC,
+                                D=DISCRETE)
 
 
 @cython.boundscheck(False)
