@@ -7,6 +7,8 @@ class Grid(object):
     """
     Object representing a grid.
 
+    Can be converted to a full array using "np.asarray" function.
+
     Parameters
     ----------
     grid_axes: list of ndarray
