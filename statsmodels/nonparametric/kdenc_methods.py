@@ -6,7 +6,7 @@ This modules contains a set of methods to compute KDEs on non-continuous data.
 
 from __future__ import division, absolute_import, print_function
 import numpy as np
-from . import kernelsnc
+from . import kernelsnc  # NoQA
 from .kde_utils import numpy_trans1d_method, finite
 from .fast_linbin import fast_linbin as fast_bin
 from copy import copy as shallow_copy
@@ -15,8 +15,7 @@ from . import kernels
 
 def _compute_bandwidth(kde):
     """
-    Compute the bandwidth and covariance for the estimated model, based of its 
-    exog attribute
+    Compute the bandwidth and covariance for the estimated model, based of its exog attribute
     """
     if kde.bandwidth is not None:
         if callable(kde.bandwidth):
@@ -42,16 +41,16 @@ class UnorderedKDE(KDEMethod):
 
     @property
     def axis_type(self):
-        return 'u'
+        return 'U'
 
     @axis_type.setter
     def axis_type(self, value):
-        if value != 'u':
+        if value != 'U':
             raise ValueError('Error, this method can only be used for discrete unordered axis')
 
     @property
     def bin_type(self):
-        return 'd'
+        return 'D'
 
     @property
     def to_bin(self):
@@ -68,9 +67,9 @@ class UnorderedKDE(KDEMethod):
         if compute_bandwidth:
             fitted._bw = _compute_bandwidth(kde)
         if not finite(kde.upper):
-            fitted._num_levels = int(fitted._exog.max())+1
+            fitted._num_levels = int(fitted._exog.max()) + 1
         else:
-            fitted._num_levels = int(kde.upper)+1
+            fitted._num_levels = int(kde.upper) + 1
         if fitted.num_levels <= 2:
             raise ValueError("Error, there must be at least two levels for this method")
         if kde.kernel is not None:
@@ -93,8 +92,7 @@ class UnorderedKDE(KDEMethod):
             self._adjust = np.asarray(float(val))
         except TypeError:
             val = np.atleast_1d(val).astype(float)
-            assert val.shape == (self.npts,), \
-                    "Adjust must be a single values or a 1D array with value per input point"
+            assert val.shape == (self.npts,), "Adjust must be a single values or a 1D array with value per input point"
             self._adjust = val
 
     @adjust.deleter
@@ -120,8 +118,7 @@ class UnorderedKDE(KDEMethod):
         """
         Selected bandwidth.
 
-        Unlike the bandwidth for the KDE, this must be an actual value and not 
-        a method.
+        Unlike the bandwidth for the KDE, this must be an actual value and not a method.
         """
         return self._bw
 
@@ -159,8 +156,7 @@ class UnorderedKDE(KDEMethod):
 
         Notes
         -----
-        At that point, you are not allowed to change the number of exogenous 
-        points.
+        At that point, you are not allowed to change the number of exogenous points.
         """
         return self._exog
 
@@ -227,18 +223,18 @@ class UnorderedKDE(KDEMethod):
 
     @lower.setter
     def lower(self, value):
-        pass # Ignore
+        pass  # Ignore
 
     @property
     def upper(self):
         if self.num_levels:
-            return self.num_levels-1
+            return self.num_levels - 1
         return np.inf
 
     @upper.setter
     def upper(self, value):
         if finite(value):
-            self._num_levels = int(value)+1
+            self._num_levels = int(value) + 1
         self._num_levels = None
 
     @numpy_trans1d_method()
@@ -249,7 +245,7 @@ class UnorderedKDE(KDEMethod):
         Parameters
         ----------
         """
-        points = points[:,None]
+        points = points[:, None]
         kpdf = self.kernel.pdf(points, self.exog, self.bandwidth, self.num_levels)
         kpdf.sum(axis=-1, out=out)
         out /= self.total_weights
@@ -260,13 +256,13 @@ class UnorderedKDE(KDEMethod):
 
     def grid(self, N=None, cut=None):
         """
-        Create a grid with all the values, in this implementation N and cut are ignored and are present only for 
+        Create a grid with all the values, in this implementation N and cut are ignored and are present only for
         compatibility with the continuous version.
         """
         weights = self.weights
         if weights.ndim == 0:
             weights = None
-        mesh, bins = fast_bin(self._exog, [0, self.num_levels-1], self.num_levels, weights=weights, bin_type='d')
+        mesh, bins = fast_bin(self._exog, [0, self.num_levels - 1], self.num_levels, weights=weights, bin_type='d')
         return mesh, self.from_binned(mesh, bins, True)
 
     def from_binned(self, mesh, bins, normed=False, dim=-1):
@@ -289,16 +285,16 @@ class OrderedKDE(UnorderedKDE):
 
     @property
     def axis_type(self):
-        return 'o'
+        return 'O'
 
     @axis_type.setter
     def axis_type(self, value):
-        if value != 'o':
+        if value != 'O':
             raise ValueError('Error, this method can only be used for discrete ordered axis')
 
     @property
     def bin_type(self):
-        return 'd'
+        return 'D'
 
     def grid_cdf(self, N=None, cut=None):
         mesh, bins = self.grid()
@@ -306,6 +302,6 @@ class OrderedKDE(UnorderedKDE):
 
     @numpy_trans1d_method()
     def cdf(self, points, out):
-        _, bins = grid_cdf()
+        _, bins = self.grid_cdf()
         out[...] = bins[points]
         return out

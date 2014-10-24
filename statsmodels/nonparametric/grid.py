@@ -393,9 +393,9 @@ class Grid(object):
                 pass
             else:
                 if f is not None:
-                    self.edges[i] = f(self.edges[i])
-                    self.bounds[i] = f(self.bounds[i])
-                    self.grid[i] = f(self.grid[i])
+                    self.edges[i][...] = f(self.edges[i])
+                    self.bounds[i][...] = f(self.bounds[i])
+                    self.grid[i][...] = f(self.grid[i])
         return self
 
     def integrate(self, values=None):

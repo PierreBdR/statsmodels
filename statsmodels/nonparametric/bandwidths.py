@@ -19,7 +19,7 @@ def _spread(X):
     ----------
     Silverman (1986) p.47
     """
-    IQR = (sap(X, 75, axis=0) - sap(X, 25, axis=0))/1.349
+    IQR = (sap(X, 75, axis=0) - sap(X, 25, axis=0)) / 1.349
     return np.minimum(np.std(X, axis=0, ddof=1), IQR)
 
 def variance_bandwidth(factor, exog):
@@ -221,12 +221,12 @@ class MultivariateBandwidth(object):
     def __call__(self, model):
         res = np.zeros(model.ndim, dtype=float)
         if len(model.axis_type) == 1:
-            axis_type = AxesType(model.axis_type[0]*model.ndim)
+            axis_type = AxesType(model.axis_type[0] * model.ndim)
         else:
             axis_type = AxesType(model.axis_type)
-        c = np.nonzero(axis_type == 'c')[0]
-        o = np.nonzero(axis_type == 'o')[0]
-        u = np.nonzero(axis_type == 'u')[0]
+        c = np.nonzero(axis_type == 'C')[0]
+        o = np.nonzero(axis_type == 'O')[0]
+        u = np.nonzero(axis_type == 'U')[0]
         adapt = KDE1DAdaptor(model)
         if callable(self.continuous):
             for d in c:
@@ -248,5 +248,4 @@ class MultivariateBandwidth(object):
             res[u] = self.unordered
         return res
 
-from .bw_crossvalidation import leastsquare_cv_bandwidth
-
+from .bw_crossvalidation import leastsquare_cv_bandwidth  # NoQA

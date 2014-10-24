@@ -6,8 +6,8 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
     X = np.atleast_1d(X).astype(float)
     if X.ndim != 1:
         raise ValueError("Error, X must be a 1D array")
-    if not bin_type in ('c', 'r', 'b', 'd'):
-        raise ValueError("Error, bin_type must be one of 'c', 'r', 'b' or 'd'")
+    if not bin_type in ('C', 'R', 'B', 'D'):
+        raise ValueError("Error, bin_type must be one of 'C', 'R', 'B' or 'D'")
     try:
         float(weights)
     except TypeError:
@@ -16,8 +16,8 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
             raise ValueError("Weights must be None or an array of the same shape as X")
     else:
         weights = np.empty((0,), dtype=float)
-    if bin_type == 'd':
-        M = int(bounds[1])+1
+    if bin_type == 'D':
+        M = int(bounds[1]) + 1
     else:
         M = int(M)
     if out is None:
@@ -31,7 +31,7 @@ def _fast_bin(fct, X, bounds, M, weights, bin_type, out):
 
     return Grid(mesh, bounds, bin_type), out
 
-def fast_linbin(X, bounds, M, weights = 1., bin_type = 'b', out = None):
+def fast_linbin(X, bounds, M, weights=1., bin_type='B', out=None):
     r"""
     Linear Binning as described in Fan and Marron (1994)
 
@@ -59,12 +59,12 @@ def fast_linbin(X, bounds, M, weights = 1., bin_type = 'b', out = None):
     -----
 
     The bin can be:
-        - Bounded ('b')
-        - Reflected ('r')
-        - Cyclic ('c')
-        - Discrete ('d')
+        - Bounded ('B')
+        - Reflected ('R')
+        - Cyclic ('C')
+        - Discrete ('D')
 
-    Unless the bin is discrete, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions 
+    Unless the bin is discrete, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions
     :math:`p_i` and :math:`p_{i+1}`, the bins will be updated as:
 
     .. math::
@@ -74,18 +74,18 @@ def fast_linbin(X, bounds, M, weights = 1., bin_type = 'b', out = None):
         b_{i+1} = b_{i+1} + \frac{x - b_i}{b_{i+1} - b_i}
 
     The placement of the bin depends on the bin type:
-    - For continuous bins, the bins are placed at :math:`\{a+\delta/2, \ldots, a+k \delta + \delta/1, \ldots 
-      b-\delta/2\}` with :math:`delta = \frac{M-1}{b-a}`.
+    - For continuous bins, the bins are placed at :math:`\{a+\delta/2, \ldots, a+k \delta + \delta/1, \ldots
+    b-\delta/2\}` with :math:`delta = \frac{M-1}{b-a}`.
     - For discrete bins, the bins are placed on the integer numbers
 
 
-    If cyclic is true, then the bins are placed at :math:`\{a, \ldots, a+k \delta, \ldots, b-\delta\}` with 
+    If cyclic is true, then the bins are placed at :math:`\{a, \ldots, a+k \delta, \ldots, b-\delta\}` with
     :math:`\delta = \frac{M}{b-a}` and there is a virtual bin in :math:`b` which is fused with :math:`a`.
 
     """
     return _fast_bin(_fast_linbin.fast_linbin, X, bounds, M, weights, bin_type, out)
 
-def fast_bin(X, bounds, M, weights = 1., bin_type='b'):
+def fast_bin(X, bounds, M, weights=1., bin_type='B', out=None):
     """
     Fast binning in 1D
 
@@ -128,11 +128,10 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
 
     n = X.shape[0]
     if M.ndim == 0:
-        M = M*np.ones((D,), dtype=int)
-    if np.any(M<2):
+        M = M * np.ones((D,), dtype=int)
+    if np.any(M < 2):
         raise ValueError("You need to specify at least 2 elements per dimension")
-    if (bounds.ndim != 2 or bounds.shape[0] != D or bounds.shape[1] != 2 or
-        M.ndim != 1 or M.shape[0] != D):
+    if (bounds.ndim != 2 or bounds.shape[0] != D or bounds.shape[1] != 2 or M.ndim != 1 or M.shape[0] != D):
         raise ValueError("Error, incompatible dimensions for bounds, M and X")
 
     try:
@@ -145,8 +144,8 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
         weights = np.empty((0,), dtype=float)
 
     for d in range(D):
-        if bin_types[d] == 'd':
-            M[d] = int(bounds[d,1]) + 1
+        if bin_types[d] == 'D':
+            M[d] = int(bounds[d, 1]) + 1
     tM = tuple(M)
 
     if out is None:
@@ -154,10 +153,10 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
     elif out.shape != tM or out.dtype != np.dtype(np.float):
         raise ValueError("Output array is either of the wrong size or the wrong type")
 
-    mesh, bounds = fct(X, bounds[:,0], bounds[:,1], out, weights, bin_types)
+    mesh, bounds = fct(X, bounds[:, 0], bounds[:, 1], out, weights, bin_types)
     return Grid(mesh, bounds, bin_types), out
 
-def fast_linbin_nd(X, bounds, M, weights=1., bin_types='b', out=None):
+def fast_linbin_nd(X, bounds, M, weights=1., bin_types='B', out=None):
     r"""
     Linear Binning in nD as described in Fan and Marron (1994)
 
@@ -186,12 +185,12 @@ def fast_linbin_nd(X, bounds, M, weights=1., bin_types='b', out=None):
     -----
 
     The bin can be:
-        - Bounded ('b')
-        - Reflected ('r')
-        - Cyclic ('c')
-        - Non-Continuous ('n')
+        - Bounded ('B')
+        - Reflected ('R')
+        - Cyclic ('C')
+        - Non-Continuous ('N')
 
-    Unless the bin is non-continuous, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions 
+    Unless the bin is non-continuous, for a point :math:`x` between bins :math:`b_i` and :math:`b_{i+1}` at positions
     :math:`p_i` and :math:`p_{i+1}`, the bins will be updated as:
 
     .. math::
@@ -201,19 +200,19 @@ def fast_linbin_nd(X, bounds, M, weights=1., bin_types='b', out=None):
         b_{i+1} = b_{i+1} + \frac{x - b_i}{b_{i+1} - b_i}
 
     The placement of the bin depends on the bin type:
-    - For reflected or un-bounded bins, the bins are placed at :math:`\{a+\delta/2, \ldots, a+k \delta + \delta/1, 
-      \ldots b-\delta/2\}` with :math:`delta = \frac{M-1}{b-a}`.
+    - For reflected or un-bounded bins, the bins are placed at :math:`\{a+\delta/2, \ldots, a+k \delta + \delta/1,
+    \ldots b-\delta/2\}` with :math:`delta = \frac{M-1}{b-a}`.
     - For cyclic bins, the bins are placed at :math:`\{a,\ldots,\}
 
 
-    If cyclic is true, then the bins are placed at :math:`\{a, \ldots, a+k \delta, \ldots, b-\delta\}` with 
+    If cyclic is true, then the bins are placed at :math:`\{a, \ldots, a+k \delta, \ldots, b-\delta\}` with
     :math:`\delta = \frac{M}{b-a}` and there is a virtual bin in :math:`b` which is fused with :math:`a`.
 
     """
     return _fast_bin_nd(_fast_linbin.fast_linbin_nd, X, bounds, M, weights, bin_types, out)
 
 
-def fast_bin_nd(X, bounds, M, weights=1., bin_types='b', out=None):
+def fast_bin_nd(X, bounds, M, weights=1., bin_types='B', out=None):
     r"""
     Simple Binning in nD
 
@@ -239,4 +238,3 @@ def fast_bin_nd(X, bounds, M, weights=1., bin_types='b', out=None):
         Values for each bin in the grid
     """
     return _fast_bin_nd(_fast_linbin.fast_bin_nd, X, bounds, M, weights, bin_types, out)
-

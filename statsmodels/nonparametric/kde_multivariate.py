@@ -59,12 +59,12 @@ class MultivariateKDE(KDEMethod):
         self.base_p2 = 16
         self._methods = {}
         self._kernels = {}
-        self._kernels_type = dict(c=kernels.normal_kernel1d(),
-                                  o=kernelsnc.WangRyzin(),
-                                  u=kernelsnc.AitchisonAitken())
-        self._methods_type = dict(c=kde1d_methods.Reflection(),
-                                  o=kdenc_methods.OrderedKDE(),
-                                  u=kdenc_methods.UnorderedKDE())
+        self._kernels_type = dict(C=kernels.normal_kernel1d(),
+                                  O=kernelsnc.WangRyzin(),
+                                  U=kernelsnc.AitchisonAitken())
+        self._methods_type = dict(C=kde1d_methods.Reflection(),
+                                  O=kdenc_methods.OrderedKDE(),
+                                  U=kdenc_methods.UnorderedKDE())
         for k in kwords:
             if hasattr(self, k):
                 setattr(self, k, kwords[k])
@@ -92,33 +92,33 @@ class MultivariateKDE(KDEMethod):
         """
         Default method for continuous axes
         """
-        return self._methods_type['c']
+        return self._methods_type['C']
 
     @continuous_method.setter
     def continuous_method(self, m):
-        self._methods_type['c'] = m
+        self._methods_type['C'] = m
 
     @property
     def ordered_method(self):
         """
         Default method for ordered axes
         """
-        return self._methods_type['o']
+        return self._methods_type['O']
 
     @ordered_method.setter
     def ordered_method(self, m):
-        self._methods_type['o'] = m
+        self._methods_type['O'] = m
 
     @property
     def unordered_method(self):
         """
         Default method for unordered axes
         """
-        return self._methods_type['u']
+        return self._methods_type['U']
 
     @unordered_method.setter
     def unordered_method(self, m):
-        self._methods_type['u'] = m
+        self._methods_type['U'] = m
 
     @property
     def adjust(self):
