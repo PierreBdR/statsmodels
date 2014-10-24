@@ -2014,8 +2014,11 @@ def _add_fwd_attr(cls, to_fwd, attr):
     def getter(self):
         return getattr(getattr(self, to_fwd), attr)
 
-    def setter(self):
-        setattr(getattr(self, to_fwd), attr)
+    def setter(self, val):
+        setattr(getattr(self, to_fwd), attr, val)
+
+    def deleter(self):
+        delattr(getattr(self, to_fwd), attr)
 
     setattr(cls, attr, property(getter, setter, doc=doc))
 
