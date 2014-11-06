@@ -30,9 +30,14 @@ import pandas as pd
 from statsmodels.tools.decorators import (cache_readonly,
     resettable_cache)
 import statsmodels.base.model as base
+# used for wrapper:
+import statsmodels.regression.linear_model as lm
+import statsmodels.base.wrapper as wrap
+
 from statsmodels.genmod import families
-from statsmodels.genmod import dependence_structures
-from statsmodels.genmod.dependence_structures import CovStruct
+from statsmodels.genmod.cov_struct import (Independence,
+                                           GlobalOddsRatio,
+                                           CovStruct)
 import statsmodels.genmod.families.varfuncs as varfuncs
 from statsmodels.genmod.families.links import Link
 from statsmodels.genmod.families import Family
@@ -68,7 +73,7 @@ class ParameterConstraint(object):
 
     def __init__(self, lhs, rhs, exog):
         """
-        Parameters:
+        Parameters
         ----------
         lhs : ndarray
            A q x p matrix which is the left hand side of the
@@ -122,8 +127,8 @@ class ParameterConstraint(object):
         Returns a vector that should be added to the offset vector to
         accommodate the constraint.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         exog : array-like
            The exogeneous data for the model.
         """
@@ -135,8 +140,8 @@ class ParameterConstraint(object):
         Returns a linearly transformed exog matrix whose columns span
         the constrained model space.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         exog : array-like
            The exogeneous data for the model.
         """
@@ -197,7 +202,7 @@ _gee_init_doc = """
     cov_struct : CovStruct class instance
         The default is Independence.  To specify an exchangeable
         structure use cov_struct = Exchangeable().  See
-        statsmodels.genmod.dependence_structures.CovStruct for more
+        statsmodels.genmod.cov_struct.CovStruct for more
         information.
     offset : array-like
         An offset to be included in the fit.  If provided, must be
@@ -274,7 +279,7 @@ _gee_fit_doc = """
     first_dep_update : integer
         No dependence structure updates occur before this
         iteration number.
-    covariance_type : string
+    cov_type : string
         One of "robust", "naive", or "bias_reduced".
 
     Returns
@@ -299,18 +304,23 @@ _gee_results_doc = """
     -------
     **Attributes**
 
-    naive_covariance : ndarray
+    cov_params_default : ndarray
+        default covariance of the parameter estimates. Is chosen among one
+        of the following three based on `cov_type`
+    cov_robust : ndarray
+        covariance of the parameter estimates that is robust
+    cov_naive : ndarray
         covariance of the parameter estimates that is not robust to
         correlation or variance misspecification
-    robust_covariance_bc : ndarray
+    cov_robust_bc : ndarray
         covariance of the parameter estimates that is robust and bias
         reduced
     converged : bool
         indicator for convergence of the optimization.
         True if the norm of the score is smaller than a threshold
-    covariance_type : string
-        string indicating whether a "robust", "naive" or "bias_
-        reduced" covariance is used as default
+    cov_type : string
+        string indicating whether a "robust", "naive" or "bias_reduced"
+        covariance is used as default
     fit_history : dict
         Contains information about the iterations.
     fittedvalues : array
@@ -396,7 +406,8 @@ class GEE(base.Model):
 
     def __init__(self, endog, exog, groups, time=None, family=None,
                  cov_struct=None, missing='none', offset=None,
-                 dep_data=None, constraint=None, update_dep=True):
+                 exposure=None, dep_data=None, constraint=None,
+                 update_dep=True, **kwargs):
 
         self.missing = missing
         self.dep_data = dep_data
@@ -411,7 +422,9 @@ class GEE(base.Model):
         # self.data.endog, etc.
         super(GEE, self).__init__(endog, exog, groups=groups,
                                   time=time, offset=offset,
-                                  dep_data=dep_data, missing=missing)
+                                  exposure=exposure,
+                                  dep_data=dep_data, missing=missing,
+                                  **kwargs)
 
         self._init_keys.extend(["update_dep", "constraint", "family",
                                 "cov_struct"])
@@ -427,7 +440,7 @@ class GEE(base.Model):
 
         # Handle the cov_struct argument
         if cov_struct is None:
-            cov_struct = dependence_structures.Independence()
+            cov_struct = Independence()
         else:
             if not issubclass(cov_struct.__class__, CovStruct):
                 raise ValueError("GEE: `cov_struct` must be a genmod "
@@ -435,11 +448,16 @@ class GEE(base.Model):
 
         self.cov_struct = cov_struct
 
-        if offset is None:
-            self.offset = np.zeros(self.exog.shape[0],
-                                   dtype=np.float64)
-        else:
+        # Handle the offset and exposure
+        self._offset_exposure = np.zeros(len(self.endog))
+        if offset is not None:
+            self._offset_exposure += self.offset
             self.offset = offset
+        if exposure is not None:
+            if not isinstance(self.family.link, families.links.Log):
+                raise ValueError("exposure can only be used with the log link function")
+            self._offset_exposure += np.log(exposure)
+            self.exposure = exposure
 
         # Handle the constraint
         self.constraint = None
@@ -454,7 +472,7 @@ class GEE(base.Model):
                                                   constraint[1],
                                                   self.exog)
 
-            self.offset += self.constraint.offset_increment()
+            self._offset_exposure += self.constraint.offset_increment()
             self.exog = self.constraint.reduced_exog()
 
         # Convert the data to the internal representation, which is a
@@ -485,7 +503,7 @@ class GEE(base.Model):
                  for y in self.endog_li]
             self.time = np.concatenate(self.time_li)
 
-        self.offset_li = self.cluster_list(self.offset)
+        self.offset_li = self.cluster_list(self._offset_exposure)
         if constraint is not None:
             self.constraint.exog_fulltrans_li = \
                 self.cluster_list(self.constraint.exog_fulltrans)
@@ -497,6 +515,9 @@ class GEE(base.Model):
         # Total sample size
         group_ns = [len(y) for y in self.endog_li]
         self.nobs = sum(group_ns)
+        # The following are column based, not on rank see #1928
+        self.df_model = self.exog.shape[1] - 1  # assumes constant
+        self.df_resid = self.nobs - self.exog.shape[1]
 
         # mean_deriv is the derivative of E[endog|exog] with respect
         # to params
@@ -541,17 +562,86 @@ class GEE(base.Model):
     # names.
     @classmethod
     def from_formula(cls, formula, groups, data, subset=None,
+                     time=None, offset=None, exposure=None,
                      *args, **kwargs):
+        """
+        Create a GEE model instance from a formula and dataframe.
+
+        Parameters
+        ----------
+        formula : str or generic Formula object
+            The formula specifying the model
+        groups : array-like or string
+            Array of grouping labels.  If a string, this is the name
+            of a variable in `data` that contains the grouping labels.
+        data : array-like
+            The data for the model.
+        subset : array-like
+            An array-like object of booleans, integers, or index
+            values that indicate the subset of the data to used when
+            fitting the model.
+        time : array-like or string
+            The time values, used for dependence structures involving
+            distances between observations.  If a string, this is the
+            name of a variable in `data` that contains the time
+            values.
+        offset : array-like or string
+            The offset values, added to the linear predictor.  If a
+            string, this is the name of a variable in `data` that
+            contains the offset values.
+        exposure : array-like or string
+            The exposure values, only used if the link function is the
+            logarithm function, in which case the log of `exposure`
+            is added to the offset (if any).  If a string, this is the
+            name of a variable in `data` that contains the offset
+            values.
+        %(missing_param_doc)s
+        args : extra arguments
+            These are passed to the model
+        kwargs : extra keyword arguments
+            These are passed to the model with one exception. The
+            ``eval_env`` keyword is passed to patsy. It can be either a
+            :class:`patsy:patsy.EvalEnvironment` object or an integer
+            indicating the depth of the namespace to use. For example, the
+            default ``eval_env=0`` uses the calling namespace. If you wish
+            to use a "clean" environment set ``eval_env=-1``.
+
+        Returns
+        -------
+        model : GEE model instance
+
+        Notes
+        ------
+        `data` must define __getitem__ with the keys in the formula
+        terms args and kwargs are passed on to the model
+        instantiation. E.g., a numpy structured or rec array, a
+        dictionary, or a pandas DataFrame.
+
+        This method currently does not correctly handle missing
+        values, so missing values should be explicitly dropped from
+        the DataFrame before calling this method.
+        """ % {'missing_param_doc' : base._missing_param_doc}
+
 
         if type(groups) == str:
             groups = data[groups]
 
-        if "time" in kwargs and type(kwargs["time"]) == str:
-            kwargs["time"] = data[kwargs["time"]]
+        if type(time) == str:
+            time = data[time]
 
-        mod = super(GEE, cls).from_formula(formula, data, subset,
-                                           groups, *args, **kwargs)
-        return mod
+        if type(offset) == str:
+            offset = data[offset]
+
+        if type(exposure) == str:
+            exposure = data[exposure]
+
+        model = super(GEE, cls).from_formula(formula, data, subset,
+                                             groups, time=time,
+                                             offset=offset,
+                                             exposure=exposure,
+                                             *args, **kwargs)
+
+        return model
 
     def cluster_list(self, array):
         """
@@ -678,15 +768,15 @@ class GEE(base.Model):
 
         Returns
         -------
-        robust_covariance : array-like
+        cov_robust : array-like
            The robust, or sandwich estimate of the covariance, which
            is meaningful even if the working covariance structure is
            incorrectly specified.
-        naive_covariance : array-like
+        cov_naive : array-like
            The model-based estimate of the covariance, which is
            meaningful if the covariance structure is correctly
            specified.
-        robust_covariance_bc : array-like
+        cov_robust_bc : array-like
            The "bias corrected" robust covariance of Mancl and
            DeRouen.
         cmat : array-like
@@ -723,11 +813,11 @@ class GEE(base.Model):
         scale = self.estimate_scale()
 
         bmati = np.linalg.inv(bmat)
-        naive_covariance = bmati * scale
-        robust_covariance = np.dot(bmati, np.dot(cmat, bmati))
+        cov_naive = bmati * scale
+        cov_robust = np.dot(bmati, np.dot(cmat, bmati))
 
         # Calculate the bias-corrected sandwich estimate of Mancl and
-        # DeRouen (requires naive_covariance so cannot be calculated
+        # DeRouen (requires cov_naive so cannot be calculated
         # in the previous loop).
         bcm = 0
         for i in range(self.num_group):
@@ -744,7 +834,7 @@ class GEE(base.Model):
             vinv_d = rslt[0]
             vinv_d /= scale
 
-            hmat = np.dot(vinv_d, naive_covariance)
+            hmat = np.dot(vinv_d, cov_naive)
             hmat = np.dot(hmat, dmat.T).T
 
             aresid = np.linalg.solve(np.eye(len(resid)) - hmat, resid)
@@ -756,26 +846,29 @@ class GEE(base.Model):
             srt = np.dot(dmat.T, srt) / scale
             bcm += np.outer(srt, srt)
 
-        robust_covariance_bc = np.dot(naive_covariance,
-                                      np.dot(bcm, naive_covariance))
+        cov_robust_bc = np.dot(cov_naive, np.dot(bcm, cov_naive))
 
-        return (robust_covariance, naive_covariance,
-            robust_covariance_bc, cmat)
+        return (cov_robust, cov_naive, cov_robust_bc, cmat)
 
-    def predict(self, params, exog=None, offset=None, linear=False):
+    def predict(self, params, exog=None, offset=None,
+                exposure=None, linear=False):
         """
-        Return predicted values for a design matrix
+        Return predicted values for a marginal regression model fit
+        using GEE.
 
         Parameters
         ----------
         params : array-like
-            Parameters / coefficients of a GLM.
+            Parameters / coefficients of a marginal regression model.
         exog : array-like, optional
             Design / exogenous data. If exog is None, model exog is
             used.
         offset : array-like, optional
             Offset for exog if provided.  If offset is None, model
             offset is used.
+        exposure : array-like, optional
+            Exposure for exog, if exposure is None, model exposure is
+            used.  Only allowed if link function is the logarithm.
         linear : bool
             If True, returns the linear predicted values.  If False,
             returns the value of the inverse of the model's link
@@ -784,21 +877,61 @@ class GEE(base.Model):
         Returns
         -------
         An array of fitted values
+
+        Notes
+        -----
+        Using log(V) as the offset is equivalent to using V as the
+        exposure.  If exposure U and offset V are both provided, then
+        log(U) + V is added to the linear predictor.
         """
 
+        # TODO: many paths through this, not well covered in tests
+
+        if exposure is not None and not isinstance(self.family.link, families.links.Log):
+            raise ValueError("exposure can only be used with the log link function")
+
+        # This is the combined offset and exposure
+        _offset = 0.
+
+        # Using model exog
         if exog is None:
             exog = self.exog
-            offset = self.offset
-        else:
-            if offset is None:
-                offset = 0
 
-        fitted = offset + np.dot(exog, params)
+            if not isinstance(self.family.link, families.links.Log):
+                # Don't need to worry about exposure
+                if offset is None:
+                    _offset = self._offset_exposure
+                else:
+                    _offset = offset
+
+            else:
+                if offset is None and exposure is None:
+                    _offset = self._offset_exposure
+                elif offset is None and exposure is not None:
+                    _offset = np.log(exposure)
+                    if hasattr(self, "offset"):
+                        _offset = _offset + self.offset
+                elif offset is not None and exposure is None:
+                    _offset = offset
+                    if hasattr(self, "exposure"):
+                        _offset = offset + np.log(self.exposure)
+                else:
+                    _offset = offset + np.log(exposure)
+
+        # exog is provided: this is simpler than above because we
+        # never use model exog or exposure if exog is provided.
+        else:
+            if offset is not None:
+                _offset += offset
+            if exposure is not None:
+                _offset += np.log(exposure)
+
+        lin_pred = _offset + np.dot(exog, params)
 
         if not linear:
-            fitted = self.family.link(fitted)
+            return self.family.link.inverse(lin_pred)
 
-        return fitted
+        return lin_pred
 
     def _starting_params(self):
         """
@@ -806,26 +939,26 @@ class GEE(base.Model):
         variable names.
         """
 
-        from statsmodels.genmod.dependence_structures import (
-            GlobalOddsRatio, Independence)
-
         dm = self.exog.shape[1]
 
+        # For categorical models, use independence cov_struct to get
+        # starting values.
         if isinstance(self.cov_struct, GlobalOddsRatio):
 
             ind = Independence()
             md = GEE(self.endog, self.exog, self.groups,
                      time=self.time, family=self.family,
-                     offset=self.offset)
+                     offset=self.offset, exposure=self.exposure)
             mdf = md.fit()
             return mdf.params
 
+        # TODO: use GLM to get Poisson starting values
         else:
             return np.zeros(dm, dtype=np.float64)
 
     def fit(self, maxiter=60, ctol=1e-6, start_params=None,
             params_niter=1, first_dep_update=0,
-            covariance_type='robust'):
+            cov_type='robust'):
 
         self._fit_history = {'params': [],
                              'score': [],
@@ -896,16 +1029,22 @@ class GEE(base.Model):
 
         scale = self.estimate_scale()
 
+        #kwargs to add to results instance, need to be available in __init__
+        res_kwds = dict(cov_type = cov_type,
+                        cov_robust = bcov,
+                        cov_naive = ncov,
+                        cov_robust_bc = bc_cov)
+
         # The superclass constructor will multiply the covariance
         # matrix argument bcov by scale, which we don't want, so we
         # divide bcov by the scale parameter here
-        results = GEEResults(self, mean_params, bcov / scale, scale)
+        results = GEEResults(self, mean_params, bcov / scale, scale,
+                             cov_type=cov_type, use_t=False,
+                             attr_kwds=res_kwds)
 
-        results.covariance_type = covariance_type
+        # attributes not needed during results__init__
         results.fit_history = self._fit_history
         delattr(self, "_fit_history")
-        results.naive_covariance = ncov
-        results.robust_covariance_bc = bc_cov
         results.score_norm = del_params
         results.converged = (del_params < ctol)
         results.cov_struct = self.cov_struct
@@ -915,13 +1054,15 @@ class GEE(base.Model):
         results.maxiter = maxiter
 
         # These will be copied over to subclasses when upgrading.
-        results._props = ["covariance_type", "fit_history",
-                          "naive_covariance", "robust_covariance_bc",
+        results._props = ["cov_type", "use_t",
+                          "cov_params_default", "cov_robust",
+                          "cov_naive", "cov_robust_bc",
+                           "fit_history",
                           "score_norm", "converged", "cov_struct",
                           "params_niter", "first_dep_update", "ctol",
                           "maxiter"]
 
-        return results
+        return GEEResultsWrapper(results)
 
     fit.__doc__ = _gee_fit_doc
 
@@ -930,15 +1071,15 @@ class GEE(base.Model):
         Expand the parameter estimate `mean_params` and covariance matrix
         `bcov` to the coordinate system of the unconstrained model.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         mean_params : array-like
             A parameter vector estimate for the reduced model.
         bcov : array-like
             The covariance matrix of mean_params.
 
-        Returns:
-        --------
+        Returns
+        -------
         mean_params : array-like
             The input parameter vector mean_params, expanded to the
             coordinate system of the full model
@@ -1055,31 +1196,63 @@ class GEEResults(base.LikelihoodModelResults):
         "This class summarizes the fit of a marginal regression model using GEE.\n"
         + _gee_results_doc)
 
-    # Default covariance type
-    covariance_type = "robust"
 
-    def __init__(self, model, params, cov_params, scale):
+    def __init__(self, model, params, cov_params, scale,
+                 cov_type='robust', use_t=False, **kwds):
 
         super(GEEResults, self).__init__(model, params,
                 normalized_cov_params=cov_params, scale=scale)
 
-    def standard_errors(self, covariance_type="robust"):
+        # not added by super
+        self.df_resid = model.df_resid
+        self.df_model = model.df_model
+
+        attr_kwds = kwds.pop('attr_kwds', {})
+        self.__dict__.update(attr_kwds)
+
+        # we don't do this if the cov_type has already been set
+        # subclasses can set it through attr_kwds
+        if not (hasattr(self, 'cov_type') and
+                hasattr(self, 'cov_params_default')):
+            self.cov_type = cov_type # keep alias
+            covariance_type = self.cov_type.lower()
+            allowed_covariances = ["robust", "naive", "bias_reduced"]
+            if covariance_type not in allowed_covariances:
+                msg = "GEE: `cov_type` must be one of " +\
+                    ", ".join(allowed_covariances)
+                raise ValueError(msg)
+
+            if cov_type == "robust":
+                cov = self.cov_robust
+            elif cov_type == "naive":
+                cov = self.cov_naive
+            elif cov_type == "bias_reduced":
+                cov = self.cov_robust_bc
+
+            self.cov_params_default = cov
+        else:
+            if self.cov_type != cov_type:
+                raise ValueError('cov_type in argument is different from '
+                                 'already attached cov_type')
+
+
+    def standard_errors(self, cov_type="robust"):
         """
         This is a convenience function that returns the standard
         errors for any covariance type.  The value of `bse` is the
         standard errors for whichever covariance type is specified as
         an argument to `fit` (defaults to "robust").
 
-        Arguments:
+        Parameters
         ----------
-        covariance_type : string
+        cov_type : string
             One of "robust", "naive", or "bias_reduced".  Determines
             the covariance used to compute standard errors.  Defaults
             to "robust".
         """
 
         # Check covariance_type
-        covariance_type = covariance_type.lower()
+        covariance_type = cov_type.lower()
         allowed_covariances = ["robust", "naive", "bias_reduced"]
         if covariance_type not in allowed_covariances:
             msg = "GEE: `covariance_type` must be one of " +\
@@ -1087,16 +1260,16 @@ class GEEResults(base.LikelihoodModelResults):
             raise ValueError(msg)
 
         if covariance_type == "robust":
-            return np.sqrt(np.diag(self.cov_params()))
+            return np.sqrt(np.diag(self.cov_robust))
         elif covariance_type == "naive":
-            return np.sqrt(np.diag(self.naive_covariance))
+            return np.sqrt(np.diag(self.cov_naive))
         elif covariance_type == "bias_reduced":
-            return np.sqrt(np.diag(self.robust_covariance_bc))
+            return np.sqrt(np.diag(self.cov_robust_bc))
 
     # Need to override to allow for different covariance types.
     @cache_readonly
     def bse(self):
-        return self.standard_errors(self.covariance_type)
+        return self.standard_errors(self.cov_type)
 
     @cache_readonly
     def resid(self):
@@ -1107,7 +1280,7 @@ class GEEResults(base.LikelihoodModelResults):
         return self.model.endog - self.fittedvalues
 
     @cache_readonly
-    def split_resid(self):
+    def resid_split(self):
         """
         Returns the residuals, the endogeneous data minus the fitted
         values from the model.  The residuals are returned as a list
@@ -1120,7 +1293,7 @@ class GEEResults(base.LikelihoodModelResults):
         return sresid
 
     @cache_readonly
-    def centered_resid(self):
+    def resid_centered(self):
         """
         Returns the residuals centered within each group.
         """
@@ -1131,7 +1304,7 @@ class GEEResults(base.LikelihoodModelResults):
         return cresid
 
     @cache_readonly
-    def split_centered_resid(self):
+    def resid_centered_split(self):
         """
         Returns the residuals centered within each group.  The
         residuals are returned as a list of arrays containing the
@@ -1143,6 +1316,13 @@ class GEEResults(base.LikelihoodModelResults):
             sresid.append(self.centered_resid[ii])
         return sresid
 
+
+    # FIXME: alias to be removed, temporary backwards compatibility
+    split_resid = resid_split
+    centered_resid = resid_centered
+    split_centered_resid = resid_centered_split
+
+
     @cache_readonly
     def fittedvalues(self):
         """
@@ -1151,8 +1331,7 @@ class GEEResults(base.LikelihoodModelResults):
         return self.model.family.link.inverse(np.dot(self.model.exog,
                                                      self.params))
 
-    def conf_int(self, alpha=.05, cols=None,
-                 covariance_type="robust"):
+    def conf_int(self, alpha=.05, cols=None, cov_type=None):
         """
         Returns confidence intervals for the fitted parameters.
 
@@ -1163,7 +1342,7 @@ class GEEResults(base.LikelihoodModelResults):
              default `alpha` = .05 returns a 95% confidence interval.
         cols : array-like, optional
              `cols` specifies which confidence intervals to return
-        covariance_type : string
+        cov_type : string
              The covariance type used for computing standard errors;
              must be one of 'robust', 'naive', and 'bias reduced'.
              See `GEE` for details.
@@ -1172,7 +1351,13 @@ class GEEResults(base.LikelihoodModelResults):
         -----
         The confidence interval is based on the Gaussian distribution.
         """
-        bse = self.standard_errors(covariance_type=covariance_type)
+        # super doesn't allow to specify cov_type and method is not
+        # implemented,
+        # FIXME: remove this method here
+        if cov_type is None:
+            bse = self.bse
+        else:
+            bse = self.standard_errors(cov_type=cov_type)
         params = self.params
         dist = stats.norm
         q = dist.ppf(1 - alpha / 2)
@@ -1186,8 +1371,7 @@ class GEEResults(base.LikelihoodModelResults):
             upper = params[cols] + q * bse[cols]
         return np.asarray(lzip(lower, upper))
 
-    def summary(self, yname=None, xname=None, title=None, alpha=.05,
-                covariance_type="robust"):
+    def summary(self, yname=None, xname=None, title=None, alpha=.05):
         """
         Summarize the GEE regression results
 
@@ -1202,7 +1386,7 @@ class GEEResults(base.LikelihoodModelResults):
             the default title
         alpha : float
             significance level for the confidence intervals
-        covariance_type : string
+        cov_type : string
             The covariance type used to compute the standard errors;
             one of 'robust' (the usual robust sandwich-type covariance
             estimate), 'naive' (ignores dependence), and 'bias
@@ -1221,8 +1405,6 @@ class GEEResults(base.LikelihoodModelResults):
 
         """
 
-        self.covariance_type = covariance_type
-
         top_left = [('Dep. Variable:', None),
                     ('Model:', None),
                     ('Method:', ['Generalized']),
@@ -1231,7 +1413,7 @@ class GEEResults(base.LikelihoodModelResults):
                     ('Dependence structure:',
                      [self.model.cov_struct.__class__.__name__]),
                     ('Date:', None),
-                    ('Covariance type: ', [covariance_type,])
+                    ('Covariance type: ', [self.cov_type,])
                    ]
 
         NY = [len(y) for y in self.model.endog_li]
@@ -1293,7 +1475,7 @@ class GEEResults(base.LikelihoodModelResults):
         plot can be used to assess the possible form of an isotropic
         covariance structure.
 
-        Arguments:
+        Parameters
         ----------
         ax : Matplotlib axes instance
             An axes on which to draw the graph.  If None, new
@@ -1355,7 +1537,7 @@ class GEEResults(base.LikelihoodModelResults):
 
         return fig
 
-    def params_sensitivity(self, dep_params_first,
+    def sensitivity_params(self, dep_params_first,
                            dep_params_last, num_steps):
         """
         Refits the GEE model using a sequence of values for the
@@ -1398,13 +1580,24 @@ class GEEResults(base.LikelihoodModelResults):
                              ctol=self.ctol,
                              params_niter=self.params_niter,
                              first_dep_update=self.first_dep_update,
-                             covariance_type=self.covariance_type)
+                             cov_type=self.cov_type)
             results.append(rslt)
 
         model.update_dep = update_dep
 
         return results
 
+    # FIXME: alias to be removed, temporary backwards compatibility
+    params_sensitivity = sensitivity_params
+
+
+class GEEResultsWrapper(lm.RegressionResultsWrapper):
+    _attrs = {
+              'centered_resid' : 'rows',
+              }
+    _wrap_attrs = wrap.union_dicts(lm.RegressionResultsWrapper._wrap_attrs,
+                                   _attrs)
+wrap.populate_wrapper(GEEResultsWrapper, GEEResults)
 
 
 class OrdinalGEE(GEE):
@@ -1501,22 +1694,27 @@ class OrdinalGEE(GEE):
 
     def fit(self, maxiter=60, ctol=1e-6, start_params=None,
             params_niter=1, first_dep_update=0,
-            covariance_type='robust'):
+            cov_type='robust'):
 
         rslt = super(OrdinalGEE, self).fit(maxiter, ctol, start_params,
                                            params_niter, first_dep_update,
-                                           covariance_type)
+                                           cov_type=cov_type)
 
+        rslt = rslt._results   # use unwrapped instance
+        res_kwds = dict(((k, getattr(rslt, k)) for k in rslt._props))
         # Convert the GEEResults to an OrdinalGEEResults
         ord_rslt = OrdinalGEEResults(self, rslt.params,
                                      rslt.cov_params() / rslt.scale,
-                                     rslt.scale)
-        for k in rslt._props:
-            setattr(ord_rslt, k, getattr(rslt, k))
+                                     rslt.scale,
+                                     cov_type=cov_type,
+                                     attr_kwds=res_kwds)
+        #for k in rslt._props:
+        #    setattr(ord_rslt, k, getattr(rslt, k))
 
-        return ord_rslt
+        return OrdinalGEEResultsWrapper(ord_rslt)
 
     fit.__doc__ = _gee_fit_doc
+
 
 class OrdinalGEEResults(GEEResults):
 
@@ -1525,18 +1723,13 @@ class OrdinalGEEResults(GEEResults):
         "for an ordinal response using GEE.\n"
         + _gee_results_doc)
 
-    def __init__(self, model, params, cov_params, scale):
-
-        super(OrdinalGEEResults, self).__init__(model, params,
-                                      cov_params, scale)
-
 
     def plot_distribution(self, ax=None, exog_values=None):
         """
         Plot the fitted probabilities of endog in an ordinal model,
         for specifed values of the predictors.
 
-        Arguments:
+        Parameters
         ----------
         ax : Matplotlib axes instance
             An axes on which to draw the graph.  If None, new
@@ -1617,6 +1810,10 @@ class OrdinalGEEResults(GEEResults):
 
         return fig
 
+class OrdinalGEEResultsWrapper(GEEResultsWrapper):
+    pass
+wrap.populate_wrapper(OrdinalGEEResultsWrapper, OrdinalGEEResults)
+
 
 class NominalGEE(GEE):
 
@@ -1656,6 +1853,12 @@ class NominalGEE(GEE):
         else:
             self.time_orig = None
             time = np.zeros((len(endog),1))
+
+        exog = np.asarray(exog)
+        endog = np.asarray(endog)
+        groups = np.asarray(groups)
+        time = np.asarray(time)
+        offset = np.asarray(offset)
 
         # The unique outcomes, except the greatest one.
         self.endog_values = np.unique(endog)
@@ -1701,30 +1904,34 @@ class NominalGEE(GEE):
 
         # Preserve endog name if there is one
         if type(self.endog_orig) == pd.Series:
-            endog_out = pd.Series(endog_out, name=self.endog_orig.names)
+            endog_out = pd.Series(endog_out, name=self.endog_orig.name)
 
         return endog_out, exog_out, groups_out, time_out, offset_out
 
     def fit(self, maxiter=60, ctol=1e-6, start_params=None,
             params_niter=1, first_dep_update=0,
-            covariance_type='robust'):
+            cov_type='robust'):
 
         rslt = super(NominalGEE, self).fit(maxiter, ctol, start_params,
                                            params_niter, first_dep_update,
-                                           covariance_type)
+                                           cov_type=cov_type)
         if rslt is None:
             warnings.warn("GEE updates did not converge",
                           ConvergenceWarning)
             return None
 
+        rslt = rslt._results   # use unwrapped instance
+        res_kwds = dict(((k, getattr(rslt, k)) for k in rslt._props))
         # Convert the GEEResults to a NominalGEEResults
         nom_rslt = NominalGEEResults(self, rslt.params,
                                      rslt.cov_params() / rslt.scale,
-                                     rslt.scale)
-        for k in rslt._props:
-            setattr(nom_rslt, k, getattr(rslt, k))
+                                     rslt.scale,
+                                     cov_type=cov_type,
+                                     attr_kwds=res_kwds)
+        #for k in rslt._props:
+        #    setattr(nom_rslt, k, getattr(rslt, k))
 
-        return nom_rslt
+        return NominalGEEResultsWrapper(nom_rslt)
 
     fit.__doc__ = _gee_fit_doc
 
@@ -1735,17 +1942,13 @@ class NominalGEEResults(GEEResults):
         "for a nominal response using GEE.\n"
         + _gee_results_doc)
 
-    def __init__(self, model, params, cov_params, scale):
-
-        super(NominalGEEResults, self).__init__(model, params,
-                                      cov_params, scale)
 
     def plot_distribution(self, ax=None, exog_values=None):
         """
         Plot the fitted probabilities of endog in an nominal model,
         for specifed values of the predictors.
 
-        Arguments:
+        Parameters
         ----------
         ax : Matplotlib axes instance
             An axes on which to draw the graph.  If None, new
@@ -1819,6 +2022,9 @@ class NominalGEEResults(GEEResults):
 
         return fig
 
+class NominalGEEResultsWrapper(GEEResultsWrapper):
+    pass
+wrap.populate_wrapper(NominalGEEResultsWrapper, NominalGEEResults)
 
 
 class MultinomialLogit(Link):
@@ -1968,7 +2174,7 @@ class Multinomial(Family):
 
     def __init__(self, nlevels):
         """
-        Arguments:
+        Parameters
         ----------
         nlevels : integer
             The number of distinct categories for the multinomial

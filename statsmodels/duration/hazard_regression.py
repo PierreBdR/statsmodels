@@ -211,8 +211,8 @@ class PHReg(model.LikelihoodModel):
     Fit the Cox proportional hazards regression model for right
     censored data.
 
-    Arguments
-    ---------
+    Parameters
+    ----------
     endog : array-like
         The observed times (event or censoring)
     exog : 2D array-like
@@ -247,7 +247,7 @@ class PHReg(model.LikelihoodModel):
 
     def __init__(self, endog, exog, status=None, entry=None,
                  strata=None, offset=None, ties='breslow',
-                 missing='drop'):
+                 missing='drop', **kwargs):
 
         # Default is no censoring
         if status is None:
@@ -255,7 +255,8 @@ class PHReg(model.LikelihoodModel):
 
         super(PHReg, self).__init__(endog, exog, status=status,
                                     entry=entry, strata=strata,
-                                    offset=offset, missing=missing)
+                                    offset=offset, missing=missing,
+                                    **kwargs)
 
         # endog and exog are automatically converted, but these are
         # not
@@ -281,6 +282,73 @@ class PHReg(model.LikelihoodModel):
                              "`breslow`")
 
         self.ties = ties
+
+    @classmethod
+    def from_formula(cls, formula, data, status=None, entry=None,
+                     strata=None, offset=None, subset=None,
+                     ties='breslow', missing='drop', *args, **kwargs):
+        """
+        Create a proportional hazards regression model from a formula
+        and dataframe.
+
+        Parameters
+        ----------
+        formula : str or generic Formula object
+            The formula specifying the model
+        data : array-like
+            The data for the model. See Notes.
+        status : array-like
+            The censoring status values; status=1 indicates that an
+            event occured (e.g. failure or death), status=0 indicates
+            that the observation was right censored. If None, defaults
+            to status=1 for all cases.
+        entry : array-like
+            The entry times, if left truncation occurs
+        strata : array-like
+            Stratum labels.  If None, all observations are taken to be
+            in a single stratum.
+        offset : array-like
+            Array of offset values
+        subset : array-like
+            An array-like object of booleans, integers, or index
+            values that indicate the subset of df to use in the
+            model. Assumes df is a `pandas.DataFrame`
+        ties : string
+            The method used to handle tied times, must be either 'breslow'
+            or 'efron'.
+        missing : string
+            The method used to handle missing data
+        args : extra arguments
+            These are passed to the model
+        kwargs : extra keyword arguments
+            These are passed to the model with one exception. The
+            ``eval_env`` keyword is passed to patsy. It can be either a
+            :class:`patsy:patsy.EvalEnvironment` object or an integer
+            indicating the depth of the namespace to use. For example, the
+            default ``eval_env=0`` uses the calling namespace. If you wish
+            to use a "clean" environment set ``eval_env=-1``.
+
+        Returns
+        -------
+        model : PHReg model instance
+        """
+
+        # Allow array arguments to be passed by column name.
+        if type(status) is str:
+            status = data[status]
+        if type(entry) is str:
+            entry = data[entry]
+        if type(strata) is str:
+            strata = data[strata]
+        if type(offset) is str:
+            offset = data[offset]
+
+        mod = super(PHReg, cls).from_formula(formula, data,
+                    status=status, entry=entry, strata=strata,
+                    offset=offset, subset=subset, ties=ties,
+                    missing=missing, *args, **kwargs)
+
+        return mod
 
     def fit(self, groups=None, **args):
         """
@@ -357,11 +425,11 @@ class PHReg(model.LikelihoodModel):
         The penalty is the"elastic net" penalty, which
         is a convex combination of L1 and L2 penalties.
 
-        The function that is minimized is:
+        The function that is minimized is: ..math::
 
-        -loglike/n + alpha*((1-L1_wt)*|params|_2^2/2 + L1_wt*|params|_1)
+            -loglike/n + alpha*((1-L1_wt)*|params|_2^2/2 + L1_wt*|params|_1)
 
-        where |*|_1 and |*|_2 are the L1 and L2 norms.
+        where :math:`|*|_1` and :math:`|*|_2` are the L1 and L2 norms.
 
         Post-estimation results are based on the same data used to
         select variables, hence may be subject to overfitting biases.
@@ -983,8 +1051,8 @@ class PHReg(model.LikelihoodModel):
         Returns the hazard-weighted average of covariate values for
         subjects who are at-risk at a particular time.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         params : ndarray
             Parameter vector
 
@@ -1142,8 +1210,8 @@ class PHReg(model.LikelihoodModel):
         Returns predicted values from the proportional hazards
         regression model.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         params : array-like
             The proportional hazards model parameters.
         cov_params : array-like
@@ -1268,17 +1336,17 @@ class PHReg(model.LikelihoodModel):
         distribution of uncensored endog (duration) values for each
         case.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         params : arrayh-like
             The model proportional hazards model parameters.
 
-        Returns:
-        --------
+        Returns
+        -------
         A list of objects of type scipy.stats.distributions.rv_discrete
 
-        Notes:
-        ------
+        Notes
+        -----
         The distributions are obtained from a simple discrete estimate
         of the survivor function that puts all mass on the observed
         failure times wihtin a stratum.
@@ -1406,12 +1474,12 @@ class PHRegResults(base.LikelihoodModelResults):
         distribution of uncensored endog (duration) values for each
         case.
 
-        Returns:
-        --------
+        Returns
+        -------
         A list of objects of type scipy.stats.distributions.rv_discrete
 
-        Notes:
-        ------
+        Notes
+        -----
         The distributions are obtained from a simple discrete estimate
         of the survivor function that puts all mass on the observed
         failure times wihtin a stratum.
@@ -1426,8 +1494,8 @@ class PHRegResults(base.LikelihoodModelResults):
         Returns predicted values from the fitted proportional hazards
         regression model.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         params : array-;like
             The proportional hazards model parameters.
         endog : array-like
@@ -1663,7 +1731,7 @@ class rv_discrete_float(object):
     """
     A class representing a collection of discrete distributions.
 
-    Parameters:
+    Parameters
     ----------
     xk : 2d array-like
         The support points, should be non-decreasing within each
@@ -1753,8 +1821,8 @@ def _opt_1d(funcs, start, L1_wt, tol):
     Optimize a L1-penalized smooth one-dimensional function of a
     single variable.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     funcs : tuple of functions
         funcs[0] is the objective function to be minimized.  funcs[1]
         and funcs[2] are, respectively, the first and second
@@ -1767,8 +1835,8 @@ def _opt_1d(funcs, start, L1_wt, tol):
     tol : non-negative real
         A convergence threshold.
 
-    Returns:
-    --------
+    Returns
+    -------
     The argmin of the objective function.
     """
 

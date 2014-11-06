@@ -12,8 +12,9 @@ import numpy as np
 from statsmodels.genmod.generalized_estimating_equations import GEE, GEEMargins
 
 from statsmodels.genmod.families import Gaussian, Binomial, Poisson
-from statsmodels.genmod.dependence_structures import (Exchangeable,
-    Independence, GlobalOddsRatio, Autoregressive, Nested)
+from statsmodels.genmod.cov_struct import (Exchangeable, Independence,
+                                           GlobalOddsRatio, Autoregressive,
+                                           Nested)
 
 from statsmodels.genmod.tests import gee_gaussian_simulation_check as gees
 
@@ -61,8 +62,8 @@ marg2 = GEEMargins(mdf2, ())
 print(marg2.summary())
 
 
-mdf_nc = md2.fit(covariance_type='naive')
-mdf_bc = md2.fit(covariance_type='bias_reduced')
+mdf_nc = md2.fit(cov_type='naive')
+mdf_bc = md2.fit(cov_type='bias_reduced')
 
 mdf_nc.use_t = False
 mdf_nc.df_resid = np.diff(mdf2.model.exog.shape)

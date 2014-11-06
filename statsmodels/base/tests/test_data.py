@@ -726,8 +726,9 @@ class CheckHasConstant(object):
                 assert_equal(mod.data.const_idx, result[1])
 
             # extra check after fit, some models raise on singular
+            fit_kwds = getattr(self, 'fit_kwds', {})
             try:
-                res = mod.fit()
+                res = mod.fit(**fit_kwds)
                 assert_equal(res.model.k_constant, result[0])
                 assert_equal(res.model.data.k_constant, result[0])
             except:
@@ -795,7 +796,20 @@ class TestHasConstantLogit(CheckHasConstant):
         from statsmodels.discrete.discrete_model import Logit
         self.mod = Logit
         self.y = self.y_bin
+        self.fit_kwds = {'disp': False}
 
+
+def test_dtype_object():
+    # see #880
+
+    X = np.random.random((40,2))
+    df = pandas.DataFrame(X)
+    df[2] = np.random.randint(2, size=40).astype('object')
+    df['constant'] = 1
+
+    y = pandas.Series(np.random.randint(2, size=40))
+
+    np.testing.assert_raises(ValueError, sm_data.handle_data, y, df)
 
 if __name__ == "__main__":
     import nose

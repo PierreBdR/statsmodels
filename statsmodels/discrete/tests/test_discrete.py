@@ -19,6 +19,7 @@ from statsmodels.discrete.discrete_model import (Logit, Probit, MNLogit,
                                                  Poisson, NegativeBinomial)
 from statsmodels.discrete.discrete_margins import _iscount, _isdummy
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from nose import SkipTest
 from .results.results_discrete import Spector, DiscreteL1, RandHIE, Anes
 from statsmodels.tools.sm_exceptions import PerfectSeparationError
@@ -111,7 +112,7 @@ class CheckModelResults(object):
 
     def test_jac(self):
         #basic cross check
-        jacsum = self.res1.model.jac(self.res1.params).sum(0)
+        jacsum = self.res1.model.score_obs(self.res1.params).sum(0)
         score = self.res1.model.score(self.res1.params)
         assert_almost_equal(jacsum, score, DECIMAL_9) #Poisson has low precision ?
 
@@ -368,15 +369,16 @@ class TestProbitCG(CheckBinaryResults):
         from statsmodels.tools.transform_model import StandardizeTransform
         transf = StandardizeTransform(data.exog)
         exog_st = transf(data.exog)
-        res1_st = Probit(data.endog, exog_st).fit(method="cg",
-                                             disp=0, maxiter=500, gtol=1e-08)
+        res1_st = Probit(data.endog,
+                         exog_st).fit(method="cg", disp=0, maxiter=1000,
+                                      gtol=1e-08)
         start_params = transf.transform_params(res1_st.params)
         assert_allclose(start_params, res2.params, rtol=1e-5, atol=1e-6)
 
-        cls.res1 = Probit(data.endog, data.exog).fit(start_params=start_params,
-                                                     method="cg",
-                                                     maxiter=500, gtol=1e-08,
-                                                     disp=0)
+        cls.res1 = Probit(data.endog,
+                          data.exog).fit(start_params=start_params,
+                                         method="cg", maxiter=1000,
+                                         gtol=1e-05, disp=0)
 
         assert_array_less(cls.res1.mle_retvals['fcalls'], 100)
 
@@ -390,7 +392,9 @@ class TestProbitNCG(CheckBinaryResults):
         res2.probit()
         cls.res2 = res2
         cls.res1 = Probit(data.endog, data.exog).fit(method="ncg",
-            disp=0, avextol=1e-8)
+                                                     disp=0, avextol=1e-8,
+                                                     warn_convergence=False)
+        # converges close enough but warnflag is 2 for precision loss
 
 class TestProbitBasinhopping(CheckBinaryResults):
     @classmethod
@@ -672,6 +676,7 @@ class TestLogitL1Compatability(CheckL1Compatability):
         exog_no_PSI = data.exog[:, :cls.m]
         cls.res_unreg = Logit(data.endog, exog_no_PSI).fit(disp=0, tol=1e-15)
 
+
 class TestMNLogitL1Compatability(CheckL1Compatability):
     @classmethod
     def setupClass(cls):
@@ -686,7 +691,7 @@ class TestMNLogitL1Compatability(CheckL1Compatability):
         # Actually drop the last columnand do an unregularized fit
         exog_no_PSI = data.exog[:, :cls.m]
         cls.res_unreg = MNLogit(data.endog, exog_no_PSI).fit(
-            disp=0, tol=1e-15)
+            disp=0, tol=1e-15, method='bfgs', maxiter=1000)
 
     def test_t_test(self):
         m = self.m
@@ -784,7 +789,9 @@ class TestL1AlphaZeroMNLogit(CompareL1):
         cls.res1 = MNLogit(data.endog, data.exog).fit_regularized(
                 method="l1", alpha=0, disp=0, acc=1e-15, maxiter=1000,
                 trim_mode='auto', auto_trim_tol=0.01)
-        cls.res2 = MNLogit(data.endog, data.exog).fit(disp=0, tol=1e-15)
+        cls.res2 = MNLogit(data.endog, data.exog).fit(disp=0, tol=1e-15,
+                                                      method='bfgs',
+                                                      maxiter=1000)
 
 
 class TestLogitNewton(CheckBinaryResults, CheckMargEff):
@@ -974,7 +981,8 @@ class TestNegativeBinomialNB2BFGS(CheckModelResults):
         data = sm.datasets.randhie.load()
         exog = sm.add_constant(data.exog, prepend=False)
         cls.res1 = NegativeBinomial(data.endog, exog, 'nb2').fit(
-                                                method='bfgs', disp=0)
+                                                method='bfgs', disp=0,
+                                                maxiter=1000)
         res2 = RandHIE()
         res2.negativebinomial_nb2_bfgs()
         cls.res2 = res2
@@ -1272,10 +1280,14 @@ def test_perfect_prediction():
     y = y[y != 2]
     X = sm.add_constant(X, prepend=True)
     mod = Logit(y,X)
-    assert_raises(PerfectSeparationError, mod.fit)
+    assert_raises(PerfectSeparationError, mod.fit, maxiter=1000)
     #turn off raise PerfectSeparationError
     mod.raise_on_perfect_prediction = False
-    mod.fit(disp=False)  #should not raise
+    # this will raise if you set maxiter high enough with a singular matrix
+    from pandas.util.testing import assert_produces_warning
+    # this is not thread-safe
+    with assert_produces_warning():
+        mod.fit(disp=False, maxiter=50)  # should not raise but does warn
 
 def test_poisson_predict():
     #GH: 175, make sure poisson predict works without offset and exposure
@@ -1301,7 +1313,10 @@ def test_poisson_newton():
     x = sm.add_constant(x, prepend=True)
     y_count = np.random.poisson(np.exp(x.sum(1)))
     mod = sm.Poisson(y_count, x)
-    res = mod.fit(start_params=-np.ones(4), method='newton', disp=0)
+    from pandas.util.testing import assert_produces_warning
+    # this is not thread-safe
+    with assert_produces_warning():
+        res = mod.fit(start_params=-np.ones(4), method='newton', disp=0)
     assert_(not res.mle_retvals['converged'])
 
 def test_issue_339():
@@ -1347,6 +1362,30 @@ def test_isdummy():
     X[:,1] = np.random.randint(-10, 10, size=50) # not integers
     count_ind = _isdummy(X)
     assert_equal(count_ind, [4, 6])
+
+
+def test_non_binary():
+    y = [1, 2, 1, 2, 1, 2]
+    X = np.random.randn(6, 2)
+    np.testing.assert_raises(ValueError, Logit, y, X)
+
+
+def test_mnlogit_factor():
+    dta = sm.datasets.anes96.load_pandas()
+    dta['endog'] = dta.endog.replace(dict(zip(range(7), 'ABCDEFG')))
+    dta.exog['constant'] = 1
+    mod = sm.MNLogit(dta.endog, dta.exog)
+    res = mod.fit(disp=0)
+    # smoke tests
+    params = res.params
+    summary = res.summary()
+
+    # with patsy
+    del dta.exog['constant']
+    mod = smf.mnlogit('PID ~ ' + ' + '.join(dta.exog.columns), dta.data)
+    res2 = mod.fit(disp=0)
+    res2.params
+    summary = res2.summary()
 
 
 if __name__ == "__main__":

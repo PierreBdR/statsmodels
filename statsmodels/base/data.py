@@ -52,6 +52,8 @@ class ModelData(object):
     Class responsible for handling input data and extracting metadata into the
     appropriate form
     """
+    _param_names = None
+
     def __init__(self, endog, exog=None, missing='none', hasconst=None,
                  **kwargs):
         if missing != 'none':
@@ -151,7 +153,16 @@ class ModelData(object):
         """
         none_array_names = []
 
-        if exog is not None:
+        # patsy's already dropped NaNs in y/X
+        missing_idx = kwargs.pop('missing_idx', None)
+
+        if missing_idx is not None:
+            # y, X already handled by patsy. add back in later.
+            combined = ()
+            combined_names = []
+            if exog is None:
+                none_array_names += ['exog']
+        elif exog is not None:
             combined = (endog, exog)
             combined_names = ['endog', 'exog']
         else:
@@ -183,7 +194,11 @@ class ModelData(object):
                     raise ValueError("Arrays with more than 2 dimensions "
                                      "aren't yet handled")
 
-        nan_mask = _nan_rows(*combined)
+        if missing_idx is not None:
+            nan_mask = missing_idx | _nan_rows(*combined)
+        else:
+            nan_mask = _nan_rows(*combined)
+
         if combined_2d:
             nan_mask = _nan_rows(*(nan_mask[:, None],) + combined_2d)
 
@@ -194,6 +209,11 @@ class ModelData(object):
             if none_array_names:
                 combined.update(dict(zip(none_array_names,
                                          [None] * len(none_array_names))))
+
+            if missing_idx is not None:
+                combined.update({'endog': endog})
+                if exog is not None:
+                    combined.update({'exog': exog})
 
             return combined, []
 
@@ -211,6 +231,12 @@ class ModelData(object):
             if none_array_names:
                 combined.update(dict(zip(none_array_names,
                                          [None] * len(none_array_names))))
+
+            if missing_idx is not None:
+                combined.update({'endog': endog})
+                if exog is not None:
+                    combined.update({'exog': exog})
+
             return combined, np.where(~nan_mask)[0].tolist()
         else:
             raise ValueError("missing option %s not understood" % missing)
@@ -250,6 +276,15 @@ class ModelData(object):
                 xnames = _make_exog_names(self.exog)
             return list(xnames)
         return None
+
+    @property
+    def param_names(self):
+        # for handling names of 'extra' parameters in summary, etc.
+        return self._param_names or self.xnames
+
+    @param_names.setter
+    def param_names(self, values):
+        self._param_names = values
 
     @cache_readonly
     def row_labels(self):
@@ -302,7 +337,7 @@ class ModelData(object):
             if len(self.exog) != len(self.endog):
                 raise ValueError("endog and exog matrices are different sizes")
 
-    def wrap_output(self, obj, how='columns'):
+    def wrap_output(self, obj, how='columns', names=None):
         if how == 'columns':
             return self.attach_columns(obj)
         elif how == 'rows':
@@ -315,6 +350,10 @@ class ModelData(object):
             return self.attach_columns_eq(obj)
         elif how == 'cov_eq':
             return self.attach_cov_eq(obj)
+        elif how == 'generic_columns':
+            return self.attach_generic_columns(obj, names)
+        elif how == 'generic_columns_2d':
+            return self.attach_generic_columns_2d(obj, names)
         else:
             return obj
 
@@ -336,6 +375,12 @@ class ModelData(object):
     def attach_dates(self, result):
         return result
 
+    def attach_generic_columns(self, result, *args, **kwargs):
+        return result
+
+    def attach_generic_columns_2d(self, result, *args, **kwargs):
+        return result
+
 
 class PatsyData(ModelData):
     def _get_names(self, arr):
@@ -347,6 +392,16 @@ class PandasData(ModelData):
     Data handling class which knows how to reattach pandas metadata to model
     results
     """
+
+    def _convert_endog_exog(self, endog, exog=None):
+        #TODO: remove this when we handle dtype systematically
+        endog = np.asarray(endog)
+        exog = exog if exog is None else np.asarray(exog)
+        if endog.dtype == object or exog is not None and exog.dtype == object:
+            raise ValueError("Pandas data cast to numpy dtype of object. "
+                             "Check input data with np.asarray(data).")
+        return super(PandasData, self)._convert_endog_exog(endog, exog)
+
     @classmethod
     def _drop_nans(cls, x, nan_mask):
         if hasattr(x, 'ix'):
@@ -378,20 +433,32 @@ class PandasData(ModelData):
             # exog is not, so just return the row labels from endog
             return self.orig_endog.index
 
+    def attach_generic_columns(self, result, names):
+        # get the attribute to use
+        column_names = getattr(self, names, None)
+        return Series(result, index=column_names)
+
+    def attach_generic_columns_2d(self, result, rownames, colnames=None):
+        colnames = colnames or rownames
+        rownames = getattr(self, rownames, None)
+        colnames = getattr(self, colnames, None)
+        return DataFrame(result, index=rownames, columns=colnames)
+
     def attach_columns(self, result):
         # this can either be a 1d array or a scalar
         # don't squeeze because it might be a 2d row array
         # if it needs a squeeze, the bug is elsewhere
         if result.ndim <= 1:
-            return Series(result, index=self.xnames)
+            return Series(result, index=self.param_names)
         else:  # for e.g., confidence intervals
-            return DataFrame(result, index=self.xnames)
+            return DataFrame(result, index=self.param_names)
 
     def attach_columns_eq(self, result):
         return DataFrame(result, index=self.xnames, columns=self.ynames)
 
     def attach_cov(self, result):
-        return DataFrame(result, index=self.xnames, columns=self.xnames)
+        return DataFrame(result, index=self.param_names,
+                         columns=self.param_names)
 
     def attach_cov_eq(self, result):
         return DataFrame(result, index=self.ynames, columns=self.ynames)

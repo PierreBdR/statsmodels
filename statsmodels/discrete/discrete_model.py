@@ -23,6 +23,7 @@ import numpy as np
 from scipy.special import gammaln
 from scipy import stats, special, optimize  # opt just for nbin
 import statsmodels.tools.tools as tools
+from statsmodels.tools import data as data_tools
 from statsmodels.tools.decorators import (resettable_cache,
         cache_readonly)
 from statsmodels.regression.linear_model import OLS
@@ -32,9 +33,11 @@ from statsmodels.tools.sm_exceptions import PerfectSeparationError
 from statsmodels.tools.numdiff import (approx_fprime, approx_hess,
                                        approx_hess_cs, approx_fprime_cs)
 import statsmodels.base.model as base
+from statsmodels.base.data import handle_data  # for mnlogit
 import statsmodels.regression.linear_model as lm
 import statsmodels.base.wrapper as wrap
 from statsmodels.compat.numpy import np_matrix_rank
+from pandas.core.api import get_dummies
 
 from statsmodels.base.l1_slsqp import fit_l1_slsqp
 try:
@@ -104,6 +107,38 @@ _l1_results_attr = """    nnz_params : Integer
     trimmed : Boolean array
         trimmed[i] == True if the ith parameter was trimmed from the model."""
 
+
+# helper for MNLogit (will be generally useful later)
+
+def _numpy_to_dummies(endog):
+    if endog.dtype.kind in ['S', 'O']:
+        endog_dummies, ynames = tools.categorical(endog, drop=True,
+                                                  dictnames=True)
+    elif endog.ndim == 2:
+        endog_dummies = endog
+        ynames = range(endog.shape[1])
+    else:
+        endog_dummies, ynames = tools.categorical(endog, drop=True,
+                                                  dictnames=True)
+    return endog_dummies, ynames
+
+
+def _pandas_to_dummies(endog):
+    if endog.ndim == 2:
+        if endog.shape[1] == 1:
+            yname = endog.columns[0]
+            endog_dummies = get_dummies(endog.icol(0))
+        else:  # series
+            yname = 'y'
+            endog_dummies = endog
+    else:
+        yname = endog.name
+        endog_dummies = get_dummies(endog)
+    ynames = endog_dummies.columns.tolist()
+
+    return endog_dummies, ynames, yname
+
+
 #### Private Model Classes ####
 
 
@@ -172,9 +207,10 @@ class DiscreteModel(base.LikelihoodModel):
     fit.__doc__ += base.LikelihoodModel.fit.__doc__
 
     def fit_regularized(self, start_params=None, method='l1',
-            maxiter='defined_by_method', full_output=1, disp=True,
-            callback=None, alpha=0, trim_mode='auto', auto_trim_tol=0.01,
-            size_trim_tol=1e-4, qc_tol=0.03, qc_verbose=False, **kwargs):
+                        maxiter='defined_by_method', full_output=1, disp=True,
+                        callback=None, alpha=0, trim_mode='auto',
+                        auto_trim_tol=0.01, size_trim_tol=1e-4, qc_tol=0.03,
+                        qc_verbose=False, **kwargs):
         """
         Fit the model using a regularized maximum likelihood.
         The regularization method AND the solver used is determined by the
@@ -272,8 +308,8 @@ class DiscreteModel(base.LikelihoodModel):
         if method in ['l1', 'l1_cvxopt_cp']:
             cov_params_func = self.cov_params_func_l1
         else:
-            raise Exception(
-                    "argument method == %s, which is not handled" % method)
+            raise Exception("argument method == %s, which is not handled"
+                            % method)
 
         ### Bundle up extra kwargs for the dictionary kwargs.  These are
         ### passed through super(...).fit() as kwargs and unpacked at
@@ -306,8 +342,8 @@ class DiscreteModel(base.LikelihoodModel):
             from statsmodels.base.l1_cvxopt import fit_l1_cvxopt_cp
             extra_fit_funcs['l1_cvxopt_cp'] = fit_l1_cvxopt_cp
         elif method.lower() == 'l1_cvxopt_cp':
-            message = """Attempt to use l1_cvxopt_cp failed since cvxopt
-            could not be imported"""
+            message = ("Attempt to use l1_cvxopt_cp failed since cvxopt "
+                        "could not be imported")
 
         if callback is None:
             callback = self._check_perfect_pred
@@ -360,6 +396,14 @@ class DiscreteModel(base.LikelihoodModel):
         raise NotImplementedError
 
 class BinaryModel(DiscreteModel):
+
+    def __init__(self, endog, exog, **kwargs):
+        super(BinaryModel, self).__init__(endog, exog, **kwargs)
+        if (self.__class__.__name__ != 'MNLogit' and
+                not np.all((self.endog >= 0) & (self.endog <= 1))):
+            raise ValueError("endog must be in the unit interval.")
+
+
     def predict(self, params, exog=None, linear=False):
         """
         Predict response variable of a model given exogenous variables.
@@ -456,24 +500,46 @@ class BinaryModel(DiscreteModel):
         return margeff
 
 class MultinomialModel(BinaryModel):
+
+    def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
+        if data_tools._is_using_ndarray_type(endog, None):
+            endog_dummies, ynames = _numpy_to_dummies(endog)
+            yname = 'y'
+        elif data_tools._is_using_pandas(endog, None):
+            endog_dummies, ynames, yname = _pandas_to_dummies(endog)
+        else:
+            endog = np.asarray(endog)
+            endog_dummies, ynames = _numpy_to_dummies(endog)
+            yname = 'y'
+
+        if not isinstance(ynames, dict):
+            ynames = dict(zip(range(endog_dummies.shape[1]), ynames))
+
+        self._ynames_map = ynames
+        data = handle_data(endog_dummies, exog, missing, hasconst, **kwargs)
+        data.ynames = yname  # overwrite this to single endog name
+        data.orig_endog = endog
+        self.wendog = data.endog
+
+        # repeating from upstream...
+        for key in kwargs:
+            try:
+                setattr(self, key, data.__dict__.pop(key))
+            except KeyError:
+                pass
+        return data
+
     def initialize(self):
         """
         Preprocesses the data for MNLogit.
-
-        Turns the endogenous variable into an array of dummies and assigns
-        J and K.
         """
         super(MultinomialModel, self).initialize()
-        #This is also a "whiten" method as used in other models (eg regression)
-        wendog, ynames = tools.categorical(self.endog, drop=True,
-                dictnames=True)
-        self._ynames_map = ynames
-        self.wendog = wendog    # don't drop first category
-        self.J = float(wendog.shape[1])
+        # This is also a "whiten" method in other models (eg regression)
+        self.endog = self.endog.argmax(1)  # turn it into an array of col idx
+        self.J = float(self.wendog.shape[1])
         self.K = float(self.exog.shape[1])
-        self.df_model *= (self.J-1) # for each J - 1 equation.
+        self.df_model *= (self.J-1)  # for each J - 1 equation.
         self.df_resid = self.exog.shape[0] - self.df_model - (self.J-1)
-
 
     def predict(self, params, exog=None, linear=False):
         """
@@ -639,10 +705,11 @@ class MultinomialModel(BinaryModel):
         return margeff.reshape(len(exog), -1, order='F')
 
 class CountModel(DiscreteModel):
-    def __init__(self, endog, exog, offset=None, exposure=None, missing='none'):
+    def __init__(self, endog, exog, offset=None, exposure=None, missing='none',
+                 **kwargs):
         self._check_inputs(offset, exposure, endog) # attaches if needed
         super(CountModel, self).__init__(endog, exog, missing=missing,
-                offset=self.offset, exposure=self.exposure)
+                offset=self.offset, exposure=self.exposure, **kwargs)
         if offset is None:
             delattr(self, 'offset')
         if exposure is None:
@@ -1003,7 +1070,8 @@ class Poisson(CountModel):
                                                   start_params=start_params,
                                                   fit_kwds=fit_kwds)
         #create dummy results Instance, TODO: wire up properly
-        res = self.fit(maxiter=0, method='nm', disp=0) # we get a wrapper back
+        res = self.fit(maxiter=0, method='nm', disp=0,
+                       warn_convergence=False) # we get a wrapper back
         res.mle_retvals['fcall'] = res_constr.mle_retvals.get('fcall', np.nan)
         res.mle_retvals['iterations'] = res_constr.mle_retvals.get(
                                                         'iterations', np.nan)
@@ -1048,7 +1116,7 @@ class Poisson(CountModel):
         L = np.exp(np.dot(X,params) + offset + exposure)
         return np.dot(self.endog - L, X)
 
-    def jac(self, params):
+    def score_obs(self, params):
         """
         Poisson model Jacobian of the log-likelihood for each observation
 
@@ -1077,6 +1145,9 @@ class Poisson(CountModel):
         X = self.exog
         L = np.exp(np.dot(X,params) + offset + exposure)
         return (self.endog - L)[:,None] * X
+
+    jac = np.deprecate(score_obs, 'jac', 'score_obs', "Use score_obs method."
+                       " jac will be removed in 0.7")
 
     def hessian(self, params):
         """
@@ -1249,7 +1320,7 @@ class Logit(BinaryModel):
         L = self.cdf(np.dot(X,params))
         return np.dot(y - L,X)
 
-    def jac(self, params):
+    def score_obs(self, params):
         """
         Logit model Jacobian of the log-likelihood for each observation
 
@@ -1276,6 +1347,9 @@ class Logit(BinaryModel):
         X = self.exog
         L = self.cdf(np.dot(X, params))
         return (y - L)[:,None] * X
+
+    jac = np.deprecate(score_obs, 'jac', 'score_obs', "Use score_obs method."
+                       " jac will be removed in 0.7")
 
     def hessian(self, params):
         """
@@ -1457,7 +1531,7 @@ class Probit(BinaryModel):
         L = q*self.pdf(q*XB)/np.clip(self.cdf(q*XB), FLOAT_EPS, 1 - FLOAT_EPS)
         return np.dot(L,X)
 
-    def jac(self, params):
+    def score_obs(self, params):
         """
         Probit model Jacobian for each observation
 
@@ -1488,6 +1562,9 @@ class Probit(BinaryModel):
         # clip to get rid of invalid divide complaint
         L = q*self.pdf(q*XB)/np.clip(self.cdf(q*XB), FLOAT_EPS, 1 - FLOAT_EPS)
         return L[:,None] * X
+
+    jac = np.deprecate(score_obs, 'jac', 'score_obs', "Use score_obs method."
+                       " jac will be removed in 0.7")
 
     def hessian(self, params):
         """
@@ -1702,7 +1779,7 @@ class MNLogit(MultinomialModel):
         score_array = np.dot(firstterm.T, self.exog).flatten()
         return loglike_value, score_array
 
-    def jac(self, params):
+    def score_obs(self, params):
         """
         Jacobian matrix for multinomial logit model log-likelihood
 
@@ -1732,6 +1809,9 @@ class MNLogit(MultinomialModel):
                                                   params))[:,1:]
         #NOTE: might need to switch terms if params is reshaped
         return (firstterm[:,:,None] * self.exog[:,None,:]).reshape(self.exog.shape[0], -1)
+
+    jac = np.deprecate(score_obs, 'jac', 'score_obs', "Use score_obs method."
+                       " jac will be removed in 0.7")
 
     def hessian(self, params):
         """
@@ -1881,10 +1961,10 @@ class NegativeBinomial(CountModel):
 
     """ + base._missing_param_doc}
     def __init__(self, endog, exog, loglike_method='nb2', offset=None,
-                       exposure=None, missing='none'):
+                       exposure=None, missing='none', **kwargs):
         super(NegativeBinomial, self).__init__(endog, exog, offset=offset,
                                                exposure=exposure,
-                                               missing=missing)
+                                               missing=missing, **kwargs)
         self.loglike_method = loglike_method
         self._initialize()
         if loglike_method in ['nb2', 'nb1']:
@@ -2172,9 +2252,12 @@ class NegativeBinomial(CountModel):
         return hess_arr
 
     #TODO: replace this with analytic where is it used?
-    def jac(self, params):
+    def score_obs(self, params):
         sc = approx_fprime_cs(params, self.loglikeobs)
         return sc
+
+    jac = np.deprecate(score_obs, 'jac', 'score_obs', "Use score_obs method."
+                       " jac will be removed in 0.7")
 
     def fit(self, start_params=None, method='bfgs', maxiter=35,
             full_output=1, disp=1, callback=None,
@@ -2319,9 +2402,13 @@ class DiscreteResults(base.LikelihoodModelResults):
 
         model = self.model
         kwds = model._get_init_kwds()
-        #TODO: what parameters to pass to fit?
+        # TODO: what parameters to pass to fit?
         mod_null = model.__class__(model.endog, np.ones(self.nobs), **kwds)
-        res_null = mod_null.fit(disp=0)
+        # TODO: consider catching and warning on convergence failure?
+        # in the meantime, try hard to converge. see
+        # TestPoissonConstrained1a.test_smoke
+        res_null = mod_null.fit(disp=0, warn_convergence=False,
+                                maxiter=10000)
         return res_null.llf
 
     @cache_readonly
@@ -2408,17 +2495,6 @@ class DiscreteResults(base.LikelihoodModelResults):
         """
         from statsmodels.discrete.discrete_margins import DiscreteMargins
         return DiscreteMargins(self, (at, method, atexog, dummy, count))
-
-
-    def margeff(self, at='overall', method='dydx', atexog=None, dummy=False,
-            count=False):
-        """DEPRECATED: marginal effects, use get_margeff instead
-        """
-        import warnings
-        warnings.warn("This method is deprecated and will be removed in 0.6.0."
-                " Use get_margeff instead", FutureWarning)
-        return self.get_margeff(at, method, atexog, dummy, count)
-
 
     def summary(self, yname=None, xname=None, title=None, alpha=.05,
                 yname_list=None):
@@ -2696,13 +2772,6 @@ class BinaryResults(DiscreteResults):
             smry.add_extra_txt(etext)
         return smry
     summary.__doc__ = DiscreteResults.summary.__doc__
-
-    @cache_readonly
-    def resid(self):
-        import warnings
-        warnings.warn("This attribute is deprecated and will be removed in "
-                      "0.6.0. Use resid_dev instead.", FutureWarning)
-        return self.resid_dev
 
     @cache_readonly
     def resid_dev(self):

@@ -1,6 +1,4 @@
-# TODO: Check tests with constant and without.  This might be an issue since df_model does nto include constant
 # TODO: Determine which tests are valid for GLSAR, and under what conditions
-# TODO: Fix HCCM to work with GLS/WLS
 # TODO: Fix issue with constant and GLS
 # TODO: GLS: add options Iterative GLS, for iterative fgls if sigma is None
 # TODO: GLS: default if sigma is none should be two-step GLS
@@ -240,9 +238,9 @@ class RegressionModel(base.LikelihoodModel):
             Must be between 0 and 1 (inclusive).  If 0, the fit is
             ridge regression.  If 1, the fit is the lasso.
         start_params : array-like
-            Starting values for `params`.
+            Starting values for ``params``.
         cnvrg_tol : scalar
-            If `params` changes by less than this amount (in sup-norm)
+            If ``params`` changes by less than this amount (in sup-norm)
             in once iteration cycle, the algorithm terminates with
             convergence.
         zero_tol : scalar
@@ -252,7 +250,7 @@ class RegressionModel(base.LikelihoodModel):
         Returns
         -------
         A RegressionResults object, of the same type returned by
-        `fit`.
+        ``fit``.
 
         Notes
         -----
@@ -260,12 +258,13 @@ class RegressionModel(base.LikelihoodModel):
         package in R.  The penalty is the "elastic net" penalty, which
         is a convex combination of L1 and L2 penalties.
 
-        The function that is minimized is:
+        The function that is minimized is: ..math::
 
-        0.5*RSS/n + alpha*((1-L1_wt)*|params|_2^2/2 + L1_wt*|params|_1)
+            0.5*RSS/n + alpha*((1-L1_wt)*|params|_2^2/2 + L1_wt*|params|_1)
 
         where RSS is the usual regression sum of squares, n is the
-        sample size, and |*|_1 and |*|_2 are the L1 and L2 norms.
+        sample size, and :math:`|*|_1` and :math:`|*|_2` are the L1 and L2
+        norms.
 
         Post-estimation results are based on the same data used to
         select variables, hence may be subject to overfitting biases.
@@ -323,10 +322,11 @@ class RegressionModel(base.LikelihoodModel):
         # Fit the reduced model to get standard errors and other
         # post-estimation results.
         ii = np.flatnonzero(params)
-        model = self.__class__(self.wendog, self.wexog[:,ii])
-        rslt = model.fit()
         cov = np.zeros((k_exog, k_exog), dtype=np.float64)
-        cov[np.ix_(ii, ii)] = rslt.normalized_cov_params
+        if len(ii) > 0:
+            model = self.__class__(self.wendog, self.wexog[:,ii])
+            rslt = model.fit()
+            cov[np.ix_(ii, ii)] = rslt.normalized_cov_params
 
         lfit = RegressionResults(self, params,
                                  normalized_cov_params=cov)
@@ -433,14 +433,15 @@ class GLS(RegressionModel):
     """ % {'params' : base._model_params_doc,
            'extra_params' : base._missing_param_doc + base._extra_param_doc}
 
-    def __init__(self, endog, exog, sigma=None, missing='none', hasconst=None):
+    def __init__(self, endog, exog, sigma=None, missing='none', hasconst=None,
+                 **kwargs):
     #TODO: add options igls, for iterative fgls if sigma is None
     #TODO: default if sigma is none should be two-step GLS
         sigma, cholsigmainv = _get_sigma(sigma, len(endog))
 
         super(GLS, self).__init__(endog, exog, missing=missing,
                                   hasconst=hasconst, sigma=sigma,
-                                  cholsigmainv=cholsigmainv)
+                                  cholsigmainv=cholsigmainv, **kwargs)
 
         #store attribute names for data arrays
         self._data_attr.extend(['sigma', 'cholsigmainv'])
@@ -566,17 +567,23 @@ class WLS(RegressionModel):
     """ % {'params' : base._model_params_doc,
            'extra_params' : base._missing_param_doc + base._extra_param_doc}
 
-    def __init__(self, endog, exog, weights=1., missing='none', hasconst=None):
+    def __init__(self, endog, exog, weights=1., missing='none', hasconst=None,
+                 **kwargs):
         weights = np.array(weights)
         if weights.shape == ():
-            weights = np.repeat(weights, len(endog))
+            if (missing == 'drop' and 'missing_idx' in kwargs and
+                    kwargs['missing_idx'] is not None):
+                # patsy may have truncated endog
+                weights = np.repeat(weights, len(kwargs['missing_idx']))
+            else:
+                weights = np.repeat(weights, len(endog))
         # handle case that endog might be of len == 1
         if len(weights) == 1:
             weights = np.array([weights.squeeze()])
         else:
             weights = weights.squeeze()
         super(WLS, self).__init__(endog, exog, missing=missing,
-                                  weights=weights, hasconst=hasconst)
+                                  weights=weights, hasconst=hasconst, **kwargs)
         nobs = self.exog.shape[0]
         weights = self.weights
         # Experimental normalization of weights
@@ -678,9 +685,12 @@ class OLS(WLS):
     """ % {'params' : base._model_params_doc,
            'extra_params' : base._missing_param_doc + base._extra_param_doc}
     #TODO: change example to use datasets.  This was the point of datasets!
-    def __init__(self, endog, exog=None, missing='none', hasconst=None):
+    def __init__(self, endog, exog=None, missing='none', hasconst=None,
+                 **kwargs):
         super(OLS, self).__init__(endog, exog, missing=missing,
-                                  hasconst=hasconst)
+                                  hasconst=hasconst, **kwargs)
+        if "weights" in self._init_keys:
+            self._init_keys.remove("weights")
 
     def loglike(self, params):
         """
@@ -760,7 +770,7 @@ class GLSAR(GLS):
     TODO
     """ % {'params' : base._model_params_doc,
            'extra_params' : base._missing_param_doc + base._extra_param_doc}
-    def __init__(self, endog, exog=None, rho=1, missing='none'):
+    def __init__(self, endog, exog=None, rho=1, missing='none', **kwargs):
         #this looks strange, interpreting rho as order if it is int
         if isinstance(rho, np.int):
             self.order = rho
@@ -777,9 +787,10 @@ class GLSAR(GLS):
             #results for rho estimate now identical to yule-walker on y
             #super(AR, self).__init__(endog, add_constant(endog))
             super(GLSAR, self).__init__(endog, np.ones((endog.shape[0],1)),
-                                        missing=missing)
+                                        missing=missing, **kwargs)
         else:
-            super(GLSAR, self).__init__(endog, exog, missing=missing)
+            super(GLSAR, self).__init__(endog, exog, missing=missing,
+                                        **kwargs)
 
     def iterative_fit(self, maxiter=3):
         """
@@ -889,7 +900,7 @@ def yule_walker(X, order=1, method="unbiased", df=None, inv=False, demean=True):
     method = str(method).lower()
     if method not in ["unbiased", "mle"]:
         raise ValueError("ACF estimation method must be 'unbiased' or 'MLE'")
-    X = np.array(X)
+    X = np.array(X, dtype=np.float64)
     if demean:
         X -= X.mean()                  # automatically demean's X
     n = df or X.shape[0]
@@ -994,7 +1005,7 @@ class RegressionResults(base.LikelihoodModelResults):
         HC2_see is a cached property.
         When HC2_se or cov_HC2 is called the RegressionResults instance will
         then have another attribute `het_scale`, which is in this case is
-        resid^(2)/(1-h_ii).  HCCM matrices are only appropriate for OLS.
+        resid^(2)/(1-h_ii).
     HC3_se
         MacKinnon and White's (1985) alternative heteroskedasticity robust
         standard errors.
@@ -1244,7 +1255,9 @@ class RegressionResults(base.LikelihoodModelResults):
     @cache_readonly
     def condition_number(self):
         """
-        Return condition number of exogenous matrix, calculated as ratio of largest to smallest eigenvalue.
+        Return condition number of exogenous matrix.
+
+        Calculated as ratio of largest to smallest eigenvalue.
         """
         eigvals = self.eigenvals
         return np.sqrt(eigvals[0]/eigvals[-1])
@@ -1298,8 +1311,6 @@ class RegressionResults(base.LikelihoodModelResults):
         """
         See statsmodels.RegressionResults
         """
-
-        # above probably could be optimized to only calc the diag
         h = np.diag(chain_dot(self.model.wexog,
                               self.normalized_cov_params,
                               self.model.wexog.T))
@@ -2117,6 +2128,9 @@ class OLSResults(RegressionResults):
             the instance has methods to calculate the main influence and
             outlier measures for the OLS regression
 
+        See also
+        --------
+        :class:`statsmodels.stats.outliers_influence.OLSInfluence`
         """
         from statsmodels.stats.outliers_influence import OLSInfluence
         return OLSInfluence(self)

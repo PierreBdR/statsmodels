@@ -976,6 +976,22 @@ def test_summary():
 
 class TestRegularizedFit(object):
 
+    # Make sure there are no issues when there are no selected
+    # variables.
+    def test_empty_model(self):
+
+       np.random.seed(742)
+       n = 100
+       endog = np.random.normal(size=n)
+       exog = np.random.normal(size=(n, 3))
+
+       model = OLS(endog, exog)
+       result = model.fit_regularized(alpha=1000)
+
+       assert_equal(result.params, 0.)
+       assert_equal(result.bse, 0.)
+
+
     def test_regularized(self):
 
         import os
@@ -1011,6 +1027,30 @@ class TestRegularizedFit(object):
 
             # Smoke test for summary
             smry = rslt.summary()
+
+
+def test_formula_missing_cat():
+    # gh-805
+
+    import statsmodels.api as sm
+    from statsmodels.formula.api import ols
+    from patsy import PatsyError
+
+    dta = sm.datasets.grunfeld.load_pandas().data
+    dta.ix[0, 'firm'] = np.nan
+
+    mod = ols(formula='value ~ invest + capital + firm + year',
+              data=dta.dropna())
+    res = mod.fit()
+
+    mod2 = ols(formula='value ~ invest + capital + firm + year',
+               data=dta)
+    res2 = mod2.fit()
+
+    assert_almost_equal(res.params.values, res2.params.values)
+
+    assert_raises(PatsyError, ols, 'value ~ invest + capital + firm + year',
+                  data=dta, missing='raise')
 
 
 if __name__=="__main__":

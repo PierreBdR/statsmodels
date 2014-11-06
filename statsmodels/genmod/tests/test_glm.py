@@ -130,7 +130,7 @@ class CheckComparisonMixin(object):
 
         assert_allclose(res1.llf, resd.llf, rtol=1e-10)
         score_obs1 = res1.model.score_obs(res1.params)
-        score_obsd = resd.model.jac(resd.params)
+        score_obsd = resd.model.score_obs(resd.params)
         assert_allclose(score_obs1, score_obsd, rtol=1e-10)
 
         # score
@@ -328,7 +328,7 @@ class TestGlmBernoulli(CheckModelResultsMixin, CheckComparisonMixin):
                 family=sm.families.Binomial()).fit()
 
         modd = discrete.Logit(self.res2.endog, self.res2.exog)
-        self.resd = modd.fit(start_params=self.res1.params * 0.9)
+        self.resd = modd.fit(start_params=self.res1.params * 0.9, disp=False)
 
 
     def score_test_r(self):
@@ -473,7 +473,7 @@ class TestGlmPoisson(CheckModelResultsMixin, CheckComparisonMixin):
         self.res2 = Cpunish()
         # compare with discrete, start close to save time
         modd = discrete.Poisson(self.data.endog, self.data.exog)
-        self.resd = modd.fit(start_params=self.res1.params * 0.9)
+        self.resd = modd.fit(start_params=self.res1.params * 0.9, disp=False)
 
 #class TestGlmPoissonIdentity(CheckModelResultsMixin):
 #    pass

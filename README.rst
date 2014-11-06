@@ -1,7 +1,5 @@
 What Statsmodels is
 ===================
-What it is
-==========
 
 Statsmodels is a Python package that provides a complement to scipy for statistical computations including descriptive statistics and estimation and inference for statistical models.
 
@@ -50,6 +48,14 @@ Source download of release tags are available on GitHub
 Binaries and source distributions are available from PyPi
 
     http://pypi.python.org/pypi/statsmodels/
+
+Binaries can be installed in Anaconda
+
+    conda install statsmodels
+
+Development snapshots are also avaiable in Anaconda
+
+    conda install -c https://conda.binstar.org/statsmodels statsmodels
 
 
 Installation from sources
