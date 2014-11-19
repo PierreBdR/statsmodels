@@ -54,20 +54,20 @@ def fast_linbin(np.ndarray[DOUBLE] X not None,
         raise ValueError('Error, invalid bin type: {0}'.format(err.args[0]))
 
     if bin_type == CYCLIC:
-        shift = -a-delta/2
         lower = 0
         upper = M
         delta = (b - a) / M
+        shift = -a-delta/2
     elif bin_type == DISCRETE:
         shift = -a
         lower = 0
         upper = M-1
         delta = (b - a) / (M-1)
     else: # REFLECTED of BOUNDED
-        shift = -a-delta/2
         lower = -0.5
         upper = M-0.5
         delta = (b - a) / M
+        shift = -a-delta/2
 
     for i in range(nobs):
         val = (X[i] + shift) / delta
@@ -241,6 +241,325 @@ def fast_bin(np.ndarray[DOUBLE] X not None,
         grid[base_idx] += w
 
     return np.linspace(a+delta/2, b-delta/2, M), [a, b]
+
+# specialized version of fast_linbin_nd for 2 and 3d
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+@cython.profile(True)
+def fast_linbin_2d(np.ndarray[DOUBLE, ndim=2] X not None,
+                    np.ndarray[DOUBLE] a not None,
+                    np.ndarray[DOUBLE] b not None,
+                    np.ndarray[DOUBLE, ndim=2] grid,
+                    np.ndarray[DOUBLE] weights not None,
+                    str s_bin_types):
+    cdef:
+        Py_ssize_t i, d, c, N
+        int nobs = X.shape[0]
+        object mesh
+        double shift[2]
+        double rem[2]
+        double val[2]
+        double lower[2]
+        double upper[2]
+        double delta[2]
+        double w
+        int base_idx[2]
+        int next_idx[2]
+        int idx[2]
+        int is_out
+        Py_ssize_t nb_corner = 4
+        double wc
+        Py_ssize_t pos
+        #void *data = np.PyArray_DATA(grid)
+        #np.npy_intp *strides = np.PyArray_STRIDES(grid)
+        np.npy_intp *M = np.PyArray_DIMS(grid)
+        int bin_types[2]
+        int has_weight = weights.shape[0] > 0
+
+    for d in range(2):
+        try:
+            bin_types[d] = bin_type_map[s_bin_types[d]]
+        except KeyError as err:
+            raise ValueError("Error, letter '{0}' is invalid. "
+                    "bin_types letters must be one of 'b', 'c', 'r' or 'd'".format(s_bin_types[d]))
+
+        if bin_types[d] == CYCLIC:
+            delta[d] = (b[d] - a[d]) / M[d]
+            shift[d] = -a[d]-delta[d]/2
+            lower[d] = 0
+            upper[d] = M[d]
+        elif bin_types[d] == DISCRETE:
+            delta[d] = (b[d] - a[d]) / (M[d] - 1)
+            shift[d] = -a[d]
+            lower[d] = 0
+            upper[d] = M[d]-1
+        else:
+            delta[d] = (b[d] - a[d]) / M[d]
+            shift[d] = -a[d]-delta[d]/2
+            lower[d] = -0.5
+            upper[d] = M[d]-0.5
+
+    for i in range(nobs):
+        is_out = 0
+        for d in range(2):
+            val[d] = (X[i,d] + shift[d]) / delta[d]
+
+            if bin_types[d] == CYCLIC:
+                if val[d] < lower[d]:
+                    rem[d] = fmod(lower[d] - val[d], M[d])
+                    val[d] = upper[d] - rem[d]
+                if val[d] >= upper[d]:
+                    rem[d] = fmod(val[d] - upper[d], M[d])
+                    val[d] = lower[d] + rem[d]
+            elif bin_types[d] == REFLECTED:
+                if val[d] < lower[d]:
+                    rem[d] = fmod(lower[d] - val[d], 2*M[d])
+                    if rem[d] < M[d]:
+                        val[d] = lower[d] + rem[d]
+                    else:
+                        val[d] = upper[d] - rem[d] + M[d]
+                elif val[d] > upper[d]:
+                    rem[d] = fmod(val[d] - upper[d], 2*M[d])
+                    if rem[d] < M[d]:
+                        val[d] = upper[d] - rem[d]
+                    else:
+                        val[d] = lower[d] + rem[d] - M[d]
+            elif bin_types[d] == BOUNDED:
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_out = 1
+                    break
+            else: # DISCRETE
+                val[d] = round(val[d])
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_out = 1
+                    break
+
+        if is_out: continue
+        if has_weight:
+            w = weights[i]
+        else:
+            w = 1.
+
+        for d in range(2):
+            base_idx[d] = <int> floor(val[d])
+            if bin_types[d] == DISCRETE:
+                rem[d] = 0
+            else:
+                rem[d] = val[d] - base_idx[d]
+            if bin_types[d] == CYCLIC:
+                if base_idx[d] == M[d]-1:
+                    next_idx[d] = 0
+                else:
+                    next_idx[d] = base_idx[d]+1
+            else:
+                if base_idx[d] < 0:
+                    base_idx[d] = 0
+                    next_idx[d] = 1
+                    rem[d] = 0
+                elif base_idx[d] >= M[d]-1:
+                    rem[d] = 0
+                    next_idx[d] = 0
+                else:
+                    next_idx[d] = base_idx[d]+1
+
+        # This uses the binary representation of the corner id (from 0 to 2**d-1) to identify where it is
+        # for each bit: 0 means lower index, 1 means upper index
+        # This means we are limited by the number of bits in Py_ssize_t. But also that we couldn't possibly allocate 
+        # an array too big for this to work.
+        for c in range(nb_corner):
+            wc = w
+            if c & 1:
+                wc *= 1 - rem[0]
+                idx[0] = base_idx[0]
+            else:
+                wc *= rem[0]
+                idx[0] = next_idx[0]
+            if c & 2:
+                wc *= 1 - rem[1]
+                idx[1] = base_idx[1]
+            else:
+                wc *= rem[1]
+                idx[1] = next_idx[1]
+            grid[idx[0],idx[1]] += wc
+
+    mesh = [None]*2
+    bounds = np.zeros((2,2), dtype=np.float)
+    for d in range(2):
+        if bin_types[d] == DISCRETE:
+            mesh[d] = np.linspace(a[d], b[d], M[d])
+            bounds[d,0] = a[d]
+            bounds[d,1] = b[d]
+        else: # BOUNDED or REFLECTED
+            mesh[d] = np.linspace(a[d]+delta[d]/2, b[d]-delta[d]/2, M[d])
+            bounds[d,0] = a[d]
+            bounds[d,1] = b[d]
+
+    return mesh, bounds
+
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+@cython.profile(True)
+def fast_linbin_3d(np.ndarray[DOUBLE, ndim=2] X not None,
+                    np.ndarray[DOUBLE] a not None,
+                    np.ndarray[DOUBLE] b not None,
+                    np.ndarray[DOUBLE,ndim=3] grid not None,
+                    np.ndarray[DOUBLE] weights not None,
+                    str s_bin_types):
+    cdef:
+        Py_ssize_t i, d, c, N
+        int nobs = X.shape[0]
+        object mesh
+        double shift[3]
+        double rem[3]
+        double val[3]
+        double lower[3]
+        double upper[3]
+        double delta[3]
+        double w
+        int base_idx[3]
+        int next_idx[3]
+        int idx[3]
+        int is_out
+        Py_ssize_t nb_corner = 1 << 3
+        double wc
+        Py_ssize_t pos
+        #void *data = np.PyArray_DATA(grid)
+        #np.npy_intp *strides = np.PyArray_STRIDES(grid)
+        np.npy_intp *M = np.PyArray_DIMS(grid)
+        int bin_types[3]
+        int has_weight = weights.shape[0] > 0
+
+    for d in range(3):
+        try:
+            bin_types[d] = bin_type_map[s_bin_types[d]]
+        except KeyError as err:
+            raise ValueError("Error, letter '{0}' is invalid. "
+                    "bin_types letters must be one of 'b', 'c', 'r' or 'd'".format(s_bin_types[d]))
+
+        if bin_types[d] == CYCLIC:
+            delta[d] = (b[d] - a[d]) / M[d]
+            shift[d] = -a[d]-delta[d]/2
+            lower[d] = 0
+            upper[d] = M[d]
+        elif bin_types[d] == DISCRETE:
+            delta[d] = (b[d] - a[d]) / (M[d] - 1)
+            shift[d] = -a[d]
+            lower[d] = 0
+            upper[d] = M[d]-1
+        else:
+            delta[d] = (b[d] - a[d]) / M[d]
+            shift[d] = -a[d]-delta[d]/2
+            lower[d] = -0.5
+            upper[d] = M[d]-0.5
+
+    for i in range(nobs):
+        is_out = 0
+        for d in range(3):
+            val[d] = (X[i,d] + shift[d]) / delta[d]
+
+            if bin_types[d] == CYCLIC:
+                if val[d] < lower[d]:
+                    rem[d] = fmod(lower[d] - val[d], M[d])
+                    val[d] = upper[d] - rem[d]
+                if val[d] >= upper[d]:
+                    rem[d] = fmod(val[d] - upper[d], M[d])
+                    val[d] = lower[d] + rem[d]
+            elif bin_types[d] == REFLECTED:
+                if val[d] < lower[d]:
+                    rem[d] = fmod(lower[d] - val[d], 2*M[d])
+                    if rem[d] < M[d]:
+                        val[d] = lower[d] + rem[d]
+                    else:
+                        val[d] = upper[d] - rem[d] + M[d]
+                elif val[d] > upper[d]:
+                    rem[d] = fmod(val[d] - upper[d], 2*M[d])
+                    if rem[d] < M[d]:
+                        val[d] = upper[d] - rem[d]
+                    else:
+                        val[d] = lower[d] + rem[d] - M[d]
+            elif bin_types[d] == BOUNDED:
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_out = 1
+                    break
+            else: # DISCRETE
+                val[d] = round(val[d])
+                if val[d] < lower[d] or val[d] > upper[d]:
+                    is_out = 1
+                    break
+
+        if is_out: continue
+        if has_weight:
+            w = weights[i]
+        else:
+            w = 1.
+
+        for d in range(3):
+            base_idx[d] = <int> floor(val[d])
+            if bin_types[d] == DISCRETE:
+                rem[d] = 0
+            else:
+                rem[d] = val[d] - base_idx[d]
+            if bin_types[d] == CYCLIC:
+                if base_idx[d] == M[d]-1:
+                    next_idx[d] = 0
+                else:
+                    next_idx[d] = base_idx[d]+1
+            else:
+                if base_idx[d] < 0:
+                    base_idx[d] = 0
+                    next_idx[d] = 1
+                    rem[d] = 0
+                elif base_idx[d] >= M[d]-1:
+                    rem[d] = 0
+                    next_idx[d] = 0
+                else:
+                    next_idx[d] = base_idx[d]+1
+
+        # This uses the binary representation of the corner id (from 0 to 2**d-1) to identify where it is
+        # for each bit: 0 means lower index, 1 means upper index
+        # This means we are limited by the number of bits in Py_ssize_t. But also that we couldn't possibly allocate 
+        # an array too big for this to work.
+        for c in range(nb_corner):
+            wc = w
+            if c & 1:
+                wc *= 1 - rem[0]
+                idx[0] = base_idx[0]
+            else:
+                wc *= rem[0]
+                idx[0] = next_idx[0]
+            if c & 2:
+                wc *= 1 - rem[1]
+                idx[1] = base_idx[1]
+            else:
+                wc *= rem[1]
+                idx[1] = next_idx[1]
+            if c & 4:
+                wc *= 1 - rem[2]
+                idx[2] = base_idx[2]
+            else:
+                wc *= rem[2]
+                idx[2] = next_idx[2]
+            grid[idx[0],idx[1],idx[2]] += wc
+
+    mesh = [None]*3
+    bounds = np.zeros((3,2), dtype=np.float)
+    for d in range(3):
+        if bin_types[d] == DISCRETE:
+            mesh[d] = np.linspace(a[d], b[d], M[d])
+            bounds[d,0] = a[d]
+            bounds[d,1] = b[d]
+        else: # BOUNDED or REFLECTED
+            mesh[d] = np.linspace(a[d]+delta[d]/2, b[d]-delta[d]/2, M[d])
+            bounds[d,0] = a[d]
+            bounds[d,1] = b[d]
+
+    return mesh, bounds
 
 
 # Note: this define is NOT the limiting factor in the algorithm. See the code for details.

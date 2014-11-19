@@ -156,6 +156,12 @@ def _fast_bin_nd(fct, X, bounds, M, weights, bin_types, out):
     mesh, bounds = fct(X, bounds[:, 0], bounds[:, 1], out, weights, bin_types)
     return Grid(mesh, bounds, bin_types), out
 
+def fast_linbin_2d(X, bounds, M, weights=1., bin_types='B', out=None):
+    return _fast_bin_nd(_fast_linbin.fast_linbin_2d, X, bounds, M, weights, bin_types, out)
+
+def fast_linbin_3d(X, bounds, M, weights=1., bin_types='B', out=None):
+    return _fast_bin_nd(_fast_linbin.fast_linbin_3d, X, bounds, M, weights, bin_types, out)
+
 def fast_linbin_nd(X, bounds, M, weights=1., bin_types='B', out=None):
     r"""
     Linear Binning in nD as described in Fan and Marron (1994)
@@ -209,6 +215,10 @@ def fast_linbin_nd(X, bounds, M, weights=1., bin_types='B', out=None):
     :math:`\delta = \frac{M}{b-a}` and there is a virtual bin in :math:`b` which is fused with :math:`a`.
 
     """
+    if X.shape[1] == 2:
+        return _fast_bin_nd(_fast_linbin.fast_linbin_2d, X, bounds, M, weights, bin_types, out)
+    if X.shape[1] == 3:
+        return _fast_bin_nd(_fast_linbin.fast_linbin_3d, X, bounds, M, weights, bin_types, out)
     return _fast_bin_nd(_fast_linbin.fast_linbin_nd, X, bounds, M, weights, bin_types, out)
 
 
