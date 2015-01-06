@@ -63,6 +63,7 @@ def process_pyx(fromfile, tofile):
     flags = ['--fast-fail']
     if tofile.endswith('.cxx'):
         flags += ['--cplus']
+    flags += ['--line-directives', '--annotate']
 
     try:
         try:
