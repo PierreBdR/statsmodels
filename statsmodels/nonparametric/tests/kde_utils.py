@@ -13,6 +13,9 @@ def generate(dist, N, low, high):
     return dist.isf(xs)
 
 def setupClass_norm(cls):
+    """
+    Setup the class for a 1D normal distribution
+    """
     cls.dist = stats.norm(0, 1)
     cls.sizes = [128, 256, 512]
     cls.vs = [generate(cls.dist, s, -5, 5) for s in cls.sizes]
