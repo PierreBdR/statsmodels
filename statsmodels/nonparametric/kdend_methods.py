@@ -176,7 +176,7 @@ class KDEnDMethod(KDEMethod):
         fitted._exog = kde.exog
         fitted._upper = _array_arg(kde.upper, 'upper', ndim)
         fitted._lower = _array_arg(kde.lower, 'lower', ndim)
-        if np.any(kde.axis_type != 'c') or np.any(fitted.axis_type != kde.axis_type):
+        if np.any(kde.axis_type != 'C') or np.any(fitted.axis_type != kde.axis_type):
             raise ValueError("Error, all axis must be continuous")
         if kde.kernel is not None:
             fitted._kernel = kde.kernel.for_ndim(ndim)
